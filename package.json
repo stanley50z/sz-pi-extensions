@@ -1,11 +1,16 @@
 {
   "name": "sz-pi-extensions",
   "version": "1.0.0",
-  "description": "SZ pi extensions — enhanced footer with token speed, git diff stats, and exit command",
+  "description": "SZ pi extensions — enhanced footer, git view, chrome devtools, and more",
   "license": "MIT",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
+  "dependencies": {
+    "chrome-devtools-mcp": "^0.26.0",
+    "typebox": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
