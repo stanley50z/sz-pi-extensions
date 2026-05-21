@@ -1,16 +1,31 @@
 {
   "name": "sz-pi-extensions",
   "version": "1.0.0",
-  "description": "SZ pi extensions — enhanced footer, git view, chrome devtools, and more",
+  "description": "SZ pi extensions — enhanced footer, git view, chrome devtools, web access, and more",
+  "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "dependencies": {
+    "@mozilla/readability": "^0.5.0",
     "chrome-devtools-mcp": "^0.26.0",
-    "typebox": "*"
+    "linkedom": "^0.16.11",
+    "p-limit": "^6.2.0",
+    "turndown": "^7.2.4",
+    "typebox": "*",
+    "unpdf": "^1.6.2"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
