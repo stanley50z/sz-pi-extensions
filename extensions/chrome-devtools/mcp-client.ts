@@ -88,7 +88,7 @@ export class McpClient {
 
   private resolveBinary(): string {
     const __dirname = dirname(fileURLToPath(import.meta.url));
-    const localBin = join(__dirname, "..", "node_modules", ".bin", "chrome-devtools-mcp");
+    const localBin = join(__dirname, "..", "..", "node_modules", ".bin", "chrome-devtools-mcp");
     try {
       statSync(localBin);
       return localBin;
