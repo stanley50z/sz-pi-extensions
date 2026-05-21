@@ -1,9 +1,9 @@
 // extensions/sz-git-view/index.ts
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createGitViewServer } from "./server";
-import { collectAll, getDiffForPath } from "./collector";
-import type { GitData } from "./collector";
-import { getHtmlTemplate } from "./template";
+import { createGitViewServer } from "./server.ts";
+import { collectAll, getDiffForPath } from "./collector.ts";
+import type { GitData } from "./collector.ts";
+import { getHtmlTemplate } from "./template.ts";
 
 export default async function (pi: ExtensionAPI) {
   const server = createGitViewServer();

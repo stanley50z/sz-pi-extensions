@@ -1,7 +1,7 @@
 // extensions/sz-git-view/collector.ts
 import { execSync } from "node:child_process";
-import { parseGitLog, parseGitStatus, parseGitWorktree } from "./git-parsers";
-import type { CommitNode, StatusEntry, WorktreeEntry } from "./git-parsers";
+import { parseGitLog, parseGitStatus, parseGitWorktree } from "./git-parsers.ts";
+import type { CommitNode, StatusEntry, WorktreeEntry } from "./git-parsers.ts";
 
 export interface GitData {
   repoName: string;
