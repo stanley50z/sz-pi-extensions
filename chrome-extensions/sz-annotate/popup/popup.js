@@ -98,10 +98,12 @@ function timestamp() {
 }
 
 async function captureScreenshot() {
+  const tab = currentTab || await getActiveTab();
+  if (!tab?.windowId) throw new Error('No active Chrome window to capture.');
   const prepared = await sendToActiveTab({ type: 'SZ_ANNOTATE_PREPARE_SCREENSHOT' });
   if (!prepared.count) throw new Error('No annotations to capture.');
   try {
-    const captured = await chrome.runtime.sendMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB' });
+    const captured = await chrome.runtime.sendMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB', windowId: tab.windowId });
     if (!captured?.ok) throw new Error(captured?.error || 'Screenshot capture failed');
     await downloadDataUrl(captured.dataUrl, `sz-annotate-${timestamp()}.png`);
     return prepared.warnings || [];
