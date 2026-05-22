@@ -13,6 +13,15 @@
     "default_title": "SZ Annotate",
     "default_popup": "popup/popup.html"
   },
+  "commands": {
+    "toggle-annotation": {
+      "suggested_key": {
+        "default": "Ctrl+Period",
+        "mac": "Command+Period"
+      },
+      "description": "Toggle annotation mode"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

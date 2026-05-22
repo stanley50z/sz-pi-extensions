@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCaptureWindowId } from '../chrome-extensions/sz-annotate/src/background-utils.mjs';
+import { TOGGLE_ANNOTATION_COMMAND, isRestrictedUrl, resolveCaptureWindowId } from '../chrome-extensions/sz-annotate/src/background-utils.mjs';
 
 test('uses explicit popup-provided window id for screenshot capture', () => {
   const windowId = resolveCaptureWindowId(
@@ -30,4 +30,14 @@ test('falls back to Chrome current window constant when no tab sender exists', (
   );
 
   assert.equal(windowId, -2);
+});
+
+test('exports the annotation toggle command name', () => {
+  assert.equal(TOGGLE_ANNOTATION_COMMAND, 'toggle-annotation');
+});
+
+test('detects restricted browser pages for shortcut toggling', () => {
+  assert.equal(isRestrictedUrl('chrome://extensions'), true);
+  assert.equal(isRestrictedUrl('chrome-extension://abc/popup.html'), true);
+  assert.equal(isRestrictedUrl('https://example.com'), false);
 });
