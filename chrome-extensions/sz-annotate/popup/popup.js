@@ -100,11 +100,14 @@ function timestamp() {
 async function captureScreenshot() {
   const prepared = await sendToActiveTab({ type: 'SZ_ANNOTATE_PREPARE_SCREENSHOT' });
   if (!prepared.count) throw new Error('No annotations to capture.');
-  const captured = await chrome.runtime.sendMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB' });
-  await sendToActiveTab({ type: 'SZ_ANNOTATE_FINISH_SCREENSHOT' }).catch(() => {});
-  if (!captured?.ok) throw new Error(captured?.error || 'Screenshot capture failed');
-  await downloadDataUrl(captured.dataUrl, `sz-annotate-${timestamp()}.png`);
-  return prepared.warnings || [];
+  try {
+    const captured = await chrome.runtime.sendMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB' });
+    if (!captured?.ok) throw new Error(captured?.error || 'Screenshot capture failed');
+    await downloadDataUrl(captured.dataUrl, `sz-annotate-${timestamp()}.png`);
+    return prepared.warnings || [];
+  } finally {
+    await sendToActiveTab({ type: 'SZ_ANNOTATE_FINISH_SCREENSHOT' }).catch(() => {});
+  }
 }
 
 buttons.start.addEventListener('click', async () => {
