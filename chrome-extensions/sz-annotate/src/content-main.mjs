@@ -100,7 +100,7 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
       <button data-action="exit">Exit</button>
     `;
     state.toolbar.querySelector('[data-action="copy"]').addEventListener('click', () => {
-      void navigator.clipboard?.writeText?.(buildPrompt(false));
+      void copyPromptFromToolbar();
     });
     state.toolbar.querySelector('[data-action="clear"]').addEventListener('click', clearAnnotations);
     state.toolbar.querySelector('[data-action="exit"]').addEventListener('click', stopAnnotationMode);
@@ -232,6 +232,43 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
       screenshotError,
       annotations: state.annotations,
     });
+  }
+
+  function timestamp() {
+    return new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+  }
+
+  function runtimeMessage(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(response);
+      });
+    });
+  }
+
+  async function copyPromptFromToolbar() {
+    let screenshotIncluded = false;
+    let screenshotError = '';
+    if (state.annotations.length > 0) {
+      try {
+        prepareScreenshot();
+        const captured = await runtimeMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB' });
+        if (!captured?.ok) throw new Error(captured?.error || 'Screenshot capture failed');
+        const downloaded = await runtimeMessage({
+          type: 'SZ_ANNOTATE_DOWNLOAD_DATA_URL',
+          dataUrl: captured.dataUrl,
+          filename: `sz-annotate-${timestamp()}.png`,
+        });
+        if (!downloaded?.ok) throw new Error(downloaded?.error || 'Screenshot download failed');
+        screenshotIncluded = true;
+      } catch (error) {
+        screenshotError = error.message;
+      } finally {
+        finishScreenshot();
+      }
+    }
+    await navigator.clipboard?.writeText?.(buildPrompt(screenshotIncluded, screenshotError));
   }
 
   function prepareScreenshot() {

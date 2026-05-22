@@ -1,22 +1,35 @@
 import { TOGGLE_ANNOTATION_COMMAND, isRestrictedUrl, resolveCaptureWindowId } from './src/background-utils.mjs';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB') return false;
+  if (message?.type === 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB') {
+    const windowId = resolveCaptureWindowId(message, sender, chrome);
+    chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      if (!dataUrl) {
+        sendResponse({ ok: false, error: 'Chrome returned an empty screenshot.' });
+        return;
+      }
+      sendResponse({ ok: true, dataUrl });
+    });
 
-  const windowId = resolveCaptureWindowId(message, sender, chrome);
-  chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
-    if (chrome.runtime.lastError) {
-      sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-      return;
-    }
-    if (!dataUrl) {
-      sendResponse({ ok: false, error: 'Chrome returned an empty screenshot.' });
-      return;
-    }
-    sendResponse({ ok: true, dataUrl });
-  });
+    return true;
+  }
 
-  return true;
+  if (message?.type === 'SZ_ANNOTATE_DOWNLOAD_DATA_URL') {
+    chrome.downloads.download({ url: message.dataUrl, filename: message.filename, saveAs: false }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
+  return false;
 });
 
 function sendTabMessage(tabId, message) {
