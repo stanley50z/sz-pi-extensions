@@ -55,6 +55,11 @@ Environment variables already exported in your shell take precedence over `.env`
 - `BRAVE_API_KEY` is required when using Brave Search.
 - `.env` is ignored by git. Use `.env.example` as the committed template.
 
+
+## Chrome Annotation MVP
+
+This repo includes a standalone Chrome extension at `chrome-extensions/sz-annotate/` for local UI annotation. It is not a Pi extension yet. Load it unpacked in Chrome, annotate localhost pages, copy the generated Markdown prompt, and attach the combined highlighted screenshot manually.
+
 ## Tools
 
 ### `web_search`
