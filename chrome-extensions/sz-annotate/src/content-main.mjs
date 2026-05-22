@@ -230,6 +230,9 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     const warnings = [];
     state.screenshotLayer.innerHTML = '';
     state.screenshotMode = true;
+    if (state.toolbar) state.toolbar.hidden = true;
+    if (state.highlight) state.highlight.hidden = true;
+    if (state.markerLayer) state.markerLayer.style.display = 'none';
     for (const annotation of state.annotations) {
       const live = findAnnotatedElement(annotation);
       const rect = live?.getBoundingClientRect?.() || annotation.rect;
@@ -254,6 +257,8 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
   function finishScreenshot() {
     state.screenshotMode = false;
     state.screenshotLayer && (state.screenshotLayer.innerHTML = '');
+    if (state.markerLayer) state.markerLayer.style.display = '';
+    if (state.toolbar) state.toolbar.hidden = state.annotations.length === 0;
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
