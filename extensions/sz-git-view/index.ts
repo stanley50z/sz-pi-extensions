@@ -5,6 +5,18 @@ import { collectAll, getDiffForPath } from "./collector.ts";
 import type { GitData } from "./collector.ts";
 import { getHtmlTemplate } from "./template.ts";
 
+const GIT_VIEW_URL_EVENT = "sz-git-view:url";
+const GIT_VIEW_URL_GLOBAL_KEY = "__SZ_GIT_VIEW_URL__";
+
+type GlobalWithGitViewUrl = typeof globalThis & {
+  [GIT_VIEW_URL_GLOBAL_KEY]?: string | null;
+};
+
+function publishGitViewUrl(pi: ExtensionAPI, url: string | null) {
+  (globalThis as GlobalWithGitViewUrl)[GIT_VIEW_URL_GLOBAL_KEY] = url;
+  pi.events.emit(GIT_VIEW_URL_EVENT, { url });
+}
+
 export default async function (pi: ExtensionAPI) {
   const server = createGitViewServer();
   let port: number | null = null;
@@ -19,6 +31,10 @@ export default async function (pi: ExtensionAPI) {
       // Re-broadcast full data (client already has it; future: pagination)
       pushData();
     }
+  };
+
+  server.onClientConnect = () => {
+    pushData();
   };
 
   // ── Push data to all connected clients ──────────────────────────────
@@ -46,9 +62,11 @@ export default async function (pi: ExtensionAPI) {
     try {
       const template = getHtmlTemplate();
       port = await server.start(template);
+      const url = `http://127.0.0.1:${port}`;
+      publishGitViewUrl(pi, url);
       if (ctx.ui?.notify) {
         ctx.ui.notify(
-          `Git view: http://127.0.0.1:${port}`,
+          `Git view: ${url}`,
           "info"
         );
       }
@@ -64,6 +82,7 @@ export default async function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     server.stop();
     port = null;
+    publishGitViewUrl(pi, null);
   });
 
   // ── Auto-refresh on relevant events ─────────────────────────────────

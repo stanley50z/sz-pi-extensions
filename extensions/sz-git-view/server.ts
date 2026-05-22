@@ -12,6 +12,7 @@ interface GitViewServer {
   stop(): void;
   broadcast(data: object): void;
   onMessage: ((type: string, payload: any) => void) | null;
+  onClientConnect: (() => void) | null;
   get clientCount(): number;
 }
 
@@ -19,6 +20,7 @@ export function createGitViewServer(): GitViewServer {
   let httpServer: Server | null = null;
   let clients: Set<WsSocket> = new Set();
   let onMessageCb: ((type: string, payload: any) => void) | null = null;
+  let onClientConnectCb: (() => void) | null = null;
   let template = "";
 
   function handleUpgrade(req: IncomingMessage, socket: WsSocket, head: Buffer) {
@@ -38,6 +40,7 @@ export function createGitViewServer(): GitViewServer {
 
     socket._wsAlive = true;
     clients.add(socket);
+    onClientConnectCb?.();
 
     let buffer = Buffer.alloc(0);
 
@@ -170,6 +173,9 @@ export function createGitViewServer(): GitViewServer {
 
     get onMessage() { return onMessageCb; },
     set onMessage(cb: ((type: string, payload: any) => void) | null) { onMessageCb = cb; },
+
+    get onClientConnect() { return onClientConnectCb; },
+    set onClientConnect(cb: (() => void) | null) { onClientConnectCb = cb; },
 
     get clientCount() { return clients.size; },
   };

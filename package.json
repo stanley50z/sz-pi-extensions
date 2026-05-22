@@ -8,6 +8,7 @@
     "pi-package"
   ],
   "scripts": {
+    "build:git-view-css": "BROWSERSLIST_IGNORE_OLD_DATA=1 tailwindcss -c extensions/sz-git-view/tailwind.config.cjs -i extensions/sz-git-view/src/git-view.css -o extensions/sz-git-view/dist/git-view.css --minify",
     "test": "node --test"
   },
   "pi": {
@@ -31,5 +32,8 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.19"
   }
 }

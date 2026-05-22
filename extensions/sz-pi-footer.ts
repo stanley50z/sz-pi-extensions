@@ -10,21 +10,44 @@
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { hyperlink, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
 
 const STATUS_KEY = "sz-footer";
+const GIT_VIEW_URL_EVENT = "sz-git-view:url";
+const GIT_VIEW_URL_GLOBAL_KEY = "__SZ_GIT_VIEW_URL__";
+
+type GlobalWithGitViewUrl = typeof globalThis & {
+  [GIT_VIEW_URL_GLOBAL_KEY]?: string | null;
+};
+
+function getGlobalGitViewUrl(): string | null {
+  const url = (globalThis as GlobalWithGitViewUrl)[GIT_VIEW_URL_GLOBAL_KEY];
+  return typeof url === "string" && url.length > 0 ? url : null;
+}
+
+function extractGitViewUrl(data: unknown): string | null | undefined {
+  if (!data || typeof data !== "object" || !("url" in data)) return undefined;
+  const url = (data as { url?: unknown }).url;
+  if (url === null) return null;
+  return typeof url === "string" && url.length > 0 ? url : undefined;
+}
 
 // ── git diff helpers ──────────────────────────────────────────────────
 
 function getDiffStats(): string | null {
   try {
+    execSync("git rev-parse --git-dir", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 3000,
+    });
+
     const out = execSync("git diff --shortstat HEAD", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 3000,
     }).trim();
-    if (!out) return null;
 
     const added = out.match(/(\d+) insertions?\(\+\)/);
     const deleted = out.match(/(\d+) deletions?\(-\)/);
@@ -51,12 +74,26 @@ function resetSpeed() {
 
 export default function (pi: ExtensionAPI) {
   let _ctx: ExtensionContext | null = null;
+  let gitViewUrl: string | null = getGlobalGitViewUrl();
+
+  const unsubscribeGitViewUrl = pi.events.on(GIT_VIEW_URL_EVENT, (data) => {
+    const nextUrl = extractGitViewUrl(data);
+    if (nextUrl === undefined) return;
+    gitViewUrl = nextUrl;
+    if (_ctx) installFooter(_ctx);
+  });
 
   // ── store context ──────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
     _ctx = ctx;
+    gitViewUrl = getGlobalGitViewUrl() ?? gitViewUrl;
     resetSpeed();
     installFooter(ctx);
+  });
+
+  pi.on("session_shutdown", async () => {
+    unsubscribeGitViewUrl();
+    _ctx = null;
   });
 
   // ── track turn timing ──────────────────────────────────────────────
@@ -151,7 +188,7 @@ export default function (pi: ExtensionAPI) {
               (_, adds: string, dels: string) =>
                 theme.fg("success", adds) + " " + theme.fg("dim", " ") + theme.fg("error", dels),
             );
-            centre = coloured;
+            centre = gitViewUrl ? hyperlink(coloured, gitViewUrl) : coloured;
           }
 
           // ── layout: left | centre | right ────────────────────────

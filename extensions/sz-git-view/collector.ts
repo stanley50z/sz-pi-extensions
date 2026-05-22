@@ -77,7 +77,7 @@ function getRepoName(): string {
 function collectCommits(): CommitNode[] {
   try {
     const out = execSync(
-      `git log --all --topo-order --parents --format="%H§%h§%an§%aI§%ar§%D§%P§%s" -${COMMIT_COUNT}`,
+      `git log --all --topo-order --parents --format="%H%x1f%h%x1f%an%x1f%aI%x1f%ar%x1f%D%x1f%P%x1f%s%x1f%b%x1e" -${COMMIT_COUNT}`,
       {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -100,8 +100,8 @@ function collectStatus(): StatusEntry[] {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: GIT_TIMEOUT,
-    }).trim();
-    return out ? parseGitStatus(out) : [];
+    });
+    return out.trim() ? parseGitStatus(out) : [];
   } catch {
     return [];
   }

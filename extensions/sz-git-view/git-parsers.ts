@@ -8,6 +8,7 @@ export interface CommitNode {
   parents: string[];   // parent hashes
   children: string[];  // child hashes (for rendering connector lines)
   message: string;     // first line of commit message
+  body: string;        // commit body without repeating the first line
   author: string;
   date: string;        // ISO 8601
   relativeDate: string; // e.g., "3 hours ago"
@@ -45,12 +46,16 @@ export interface WorktreeEntry {
 
 // ── Parsers ───────────────────────────────────────────────────────────
 
-// git log --all --topo-order --parents --format="%H§%h§%an§%aI§%ar§%D§%P§%s" -30
+// git log --all --topo-order --parents --format="%H%x1f%h%x1f%an%x1f%aI%x1f%ar%x1f%D%x1f%P%x1f%s%x1f%b%x1e" -30
 export function parseGitLog(output: string): CommitNode[] {
   if (!output.trim()) return [];
-  return output.trim().split("\n").map(line => {
-    const parts = line.split("§");
-    // format: %H§%h§%an§%aI§%ar§%D§%P§%s
+
+  const records = output.includes("\x1e")
+    ? output.split("\x1e").map(record => record.trim()).filter(Boolean)
+    : output.trim().split("\n");
+
+  return records.map(record => {
+    const parts = record.includes("\x1f") ? record.split("\x1f") : record.split("§");
     const fullHash = parts[0] || "";
     const hash = parts[1] || fullHash.slice(0, 7);
     const author = parts[2] || "";
@@ -58,7 +63,8 @@ export function parseGitLog(output: string): CommitNode[] {
     const relativeDate = parts[4] || "";
     const refsStr = parts[5] || "";
     const parentsStr = parts[6] || "";
-    const message = parts.slice(7).join("§");
+    const message = parts[7] || "";
+    const body = parts.slice(8).join(parts.includes("§") ? "§" : "\x1f").trim();
 
     const parentList = parentsStr ? parentsStr.split(" ").filter(p => p) : [];
 
@@ -70,6 +76,7 @@ export function parseGitLog(output: string): CommitNode[] {
       parents: parentList,
       children: [],
       message,
+      body,
       author,
       date,
       relativeDate,
@@ -82,7 +89,7 @@ export function parseGitLog(output: string): CommitNode[] {
 // git status --porcelain -uall
 export function parseGitStatus(output: string): StatusEntry[] {
   if (!output.trim()) return [];
-  return output.trim().split("\n").map(line => {
+  return output.trimEnd().split("\n").map(line => {
     const status = line.slice(0, 2).trim();
     const rest = line.slice(3);
     // Handle renames: "R  old -> new"
