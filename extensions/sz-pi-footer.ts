@@ -60,6 +60,25 @@ function getDiffStats(): string | null {
   }
 }
 
+// ── formatting helpers ────────────────────────────────────────────────
+
+function sanitizeStatusText(text: string): string {
+  return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+}
+
+function formatTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1000000) return `${Math.round(count / 1000)}k`;
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+  return `${Math.round(count / 1000000)}M`;
+}
+
+function compactPath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE;
+  return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+}
+
 // ── token speed tracking ──────────────────────────────────────────────
 
 let lastTurnStart: number | null = null;
@@ -101,6 +120,10 @@ export default function (pi: ExtensionAPI) {
     lastTurnStart = Date.now();
   });
 
+  pi.on("thinking_level_select", async (_event, ctx) => {
+    installFooter(ctx);
+  });
+
   pi.on("turn_end", async (_event, ctx) => {
     if (lastTurnStart === null) return;
 
@@ -117,7 +140,9 @@ export default function (pi: ExtensionAPI) {
     }
 
     const elapsedSec = (Date.now() - lastTurnStart) / 1000;
-    lastOutputTokensPerSec = elapsedSec > 0 ? outputTokens / elapsedSec : null;
+    if (elapsedSec > 0 && outputTokens > 0) {
+      lastOutputTokensPerSec = outputTokens / elapsedSec;
+    }
 
     installFooter(ctx);
   });
@@ -145,39 +170,104 @@ export default function (pi: ExtensionAPI) {
         dispose: unsub,
         invalidate() {},
         render(width: number): string[] {
-          // ── compute token totals from the full branch ──────────────
+          // ── line 1: cwd, git branch, session name, token speed ─────
+          const speedText = lastOutputTokensPerSec !== null && lastOutputTokensPerSec > 0
+            ? lastOutputTokensPerSec >= 100
+              ? `${Math.round(lastOutputTokensPerSec)} tok/s`
+              : `${lastOutputTokensPerSec.toFixed(1)} tok/s`
+            : "0 tok/s";
+          const speedRight = `${speedText}  `;
+          const speedW = visibleWidth(speedRight);
+
+          const cwd = typeof ctx.sessionManager.getCwd === "function"
+            ? ctx.sessionManager.getCwd()
+            : ctx.cwd;
+          let pwd = compactPath(cwd);
+          const branch = footerData.getGitBranch();
+          if (branch) pwd = `${pwd} (${branch})`;
+          const sessionName = typeof ctx.sessionManager.getSessionName === "function"
+            ? ctx.sessionManager.getSessionName()
+            : undefined;
+
+          const minGap = 2;
+          const availableBeforeSpeed = Math.max(1, width - speedW - minGap);
+          const sessionText = sessionName ? truncateToWidth(sessionName, availableBeforeSpeed, "...") : "";
+          const sessionW = visibleWidth(sessionText);
+          const pwdMaxWidth = sessionText
+            ? Math.max(1, Math.floor((availableBeforeSpeed - sessionW - minGap * 2) / 2))
+            : availableBeforeSpeed;
+          const pwdText = truncateToWidth(pwd, pwdMaxWidth, "...");
+          const pwdW = visibleWidth(pwdText);
+
+          let prefix: string;
+          if (sessionText) {
+            const targetSessionStart = Math.max(pwdW + minGap, Math.floor((width - sessionW) / 2));
+            const gapAfterPwd = Math.max(minGap, targetSessionStart - pwdW);
+            prefix = theme.fg("dim", pwdText) + " ".repeat(gapAfterPwd) + theme.fg("dim", sessionText);
+          } else {
+            prefix = theme.fg("dim", pwdText);
+          }
+
+          const pwdPad = " ".repeat(Math.max(minGap, width - visibleWidth(prefix) - speedW));
+          const pwdLine = prefix + pwdPad + theme.fg("dim", speedRight);
+
+          // ── compute token totals from all entries, like default ────
           let input = 0,
             output = 0,
+            cacheRead = 0,
+            cacheWrite = 0,
             cost = 0;
-          for (const e of ctx.sessionManager.getBranch()) {
+          const entries = typeof ctx.sessionManager.getEntries === "function"
+            ? ctx.sessionManager.getEntries()
+            : ctx.sessionManager.getBranch();
+          for (const e of entries) {
             if (e.type === "message" && e.message.role === "assistant") {
               const m = e.message as AssistantMessage;
               input += m.usage.input;
               output += m.usage.output;
+              cacheRead += m.usage.cacheRead || 0;
+              cacheWrite += m.usage.cacheWrite || 0;
               cost += m.usage.cost.total;
             }
           }
 
-          // ── format helpers ────────────────────────────────────────
-          const fmt = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
+          // ── line 2 left: original stats plus context usage ─────────
+          const statsParts: string[] = [];
+          if (input) statsParts.push(`↑${formatTokens(input)}`);
+          if (output) statsParts.push(`↓${formatTokens(output)}`);
+          if (cacheRead) statsParts.push(`R${formatTokens(cacheRead)}`);
+          if (cacheWrite) statsParts.push(`W${formatTokens(cacheWrite)}`);
 
-          // ── build left side: tokens, cost, speed ──────────────────
-          let left = theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)}`);
-
-          if (lastOutputTokensPerSec !== null && lastOutputTokensPerSec > 0) {
-            const speedStr =
-              lastOutputTokensPerSec >= 100
-                ? `${Math.round(lastOutputTokensPerSec)} tok/s`
-                : `${lastOutputTokensPerSec.toFixed(1)} tok/s`;
-            left += " " + theme.fg("muted", speedStr);
+          const usingSubscription = ctx.model ? ctx.modelRegistry?.isUsingOAuth?.(ctx.model) : false;
+          if (cost || usingSubscription) {
+            statsParts.push(`$${cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
           }
 
-          left += " " + theme.fg("accent", `$${cost.toFixed(3)}`);
+          const contextUsage = ctx.getContextUsage?.();
+          const contextWindow = contextUsage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+          const contextPercentValue = contextUsage?.percent ?? 0;
+          const contextPercent = contextUsage?.percent !== null && contextUsage?.percent !== undefined
+            ? contextPercentValue.toFixed(1)
+            : "?";
+          const contextDisplay = contextPercent === "?"
+            ? `?/${formatTokens(contextWindow)} (auto)`
+            : `${contextPercent}%/${formatTokens(contextWindow)} (auto)`;
+          if (contextWindow) statsParts.push(contextDisplay);
 
-          // ── build right side: model ───────────────────────────────
-          const branch = footerData.getGitBranch();
-          const branchStr = branch ? ` (${branch})` : "";
-          const right = theme.fg("dim", `${ctx.model?.id || "no-model"}${branchStr}`);
+          let left = theme.fg("dim", statsParts.join(" "));
+
+          // ── line 2 right: provider, model, reasoning, speed ────────
+          const providerCount = footerData.getAvailableProviderCount?.() ?? 1;
+          const modelName = ctx.model?.id || "no-model";
+          const providerPrefix = providerCount > 1 && ctx.model ? `(${ctx.model.provider}) ` : "";
+          const reasoningLevel = pi.getThinkingLevel();
+          const statuses = Array.from(footerData.getExtensionStatuses().entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([, status]) => sanitizeStatusText(status))
+            .filter((status) => status.length > 0);
+          const statusText = statuses.length > 0 ? ` ${statuses.join(" ")}` : "";
+          const rightText = `${providerPrefix}${modelName} (${reasoningLevel})${statusText}`;
+          const right = theme.fg("dim", `${rightText}  `);
 
           // ── git diff stats (centre, if available) ─────────────────
           const diff = getDiffStats();
@@ -191,26 +281,28 @@ export default function (pi: ExtensionAPI) {
             centre = gitViewUrl ? hyperlink(coloured, gitViewUrl) : coloured;
           }
 
-          // ── layout: left | centre | right ────────────────────────
+          // ── line 2 layout: stats | centred diff | right side ───────
           const leftW = visibleWidth(left);
           const centreW = visibleWidth(centre);
           const rightW = visibleWidth(right);
+          let statsLine: string;
 
           if (centre) {
             const available = width - leftW - rightW;
             if (available > centreW + 2) {
               const padLeft = Math.floor((available - centreW) / 2);
               const padRight = available - centreW - padLeft;
-              return [truncateToWidth(
-                left + " ".repeat(padLeft) + centre + " ".repeat(padRight) + right,
-                width,
-              )];
+              statsLine = left + " ".repeat(padLeft) + centre + " ".repeat(padRight) + right;
+            } else {
+              const pad = " ".repeat(Math.max(2, width - leftW - rightW));
+              statsLine = left + pad + right;
             }
+          } else {
+            const pad = " ".repeat(Math.max(2, width - leftW - rightW));
+            statsLine = left + pad + right;
           }
 
-          // No centre stats — left | spacer | right
-          const pad = " ".repeat(Math.max(1, width - leftW - rightW));
-          return [truncateToWidth(left + pad + right, width)];
+          return [pwdLine, truncateToWidth(statsLine, width)];
         },
       };
     });
