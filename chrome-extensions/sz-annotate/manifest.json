@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "SZ Annotate",
+  "version": "0.1.0",
+  "description": "Chrome-only visual annotation MVP for local dev pages.",
+  "permissions": ["activeTab", "scripting", "tabs", "downloads"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "http://0.0.0.0/*", "http://[::1]/*", "https://localhost/*", "<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "SZ Annotate",
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/bootstrap.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/*.mjs"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
