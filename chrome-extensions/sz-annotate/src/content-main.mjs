@@ -1,6 +1,6 @@
 import { formatAnnotationPrompt } from './formatter.mjs';
 import { collectElementMetadata } from './metadata.mjs';
-import { isExtensionUiElement, isInViewport, shouldSubmitCommentKey } from './dom-utils.mjs';
+import { getAnnotationCursorCss, isExtensionUiElement, isInViewport, shouldShowAnnotationChrome, shouldSubmitCommentKey } from './dom-utils.mjs';
 
 if (!globalThis.__szAnnotateRuntimeLoaded) {
   globalThis.__szAnnotateRuntimeLoaded = true;
@@ -17,6 +17,7 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     markerLayer: null,
     screenshotLayer: null,
     screenshotMode: false,
+    cursorStyle: null,
   };
 
   function ensureOverlay() {
@@ -92,7 +93,7 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
 
   function renderToolbar() {
     ensureOverlay();
-    state.toolbar.hidden = false;
+    state.toolbar.hidden = !shouldShowAnnotationChrome(state.active);
     state.toolbar.innerHTML = `
       <strong>SZ Annotate · ${state.annotations.length} item${state.annotations.length === 1 ? '' : 's'}</strong>
       <button data-action="copy">Copy Prompt</button>
@@ -108,6 +109,7 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
 
   function renderMarkers() {
     ensureOverlay();
+    state.markerLayer.hidden = !shouldShowAnnotationChrome(state.active);
     state.markerLayer.innerHTML = '';
     for (const annotation of state.annotations) {
       const marker = document.createElement('div');
@@ -183,15 +185,30 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     if (event.key === 'Escape') stopAnnotationMode();
   }
 
+  function enableAnnotationCursor() {
+    if (state.cursorStyle) return;
+    state.cursorStyle = document.createElement('style');
+    state.cursorStyle.setAttribute('data-sz-annotate-cursor', 'true');
+    state.cursorStyle.textContent = getAnnotationCursorCss();
+    document.documentElement.appendChild(state.cursorStyle);
+  }
+
+  function disableAnnotationCursor() {
+    state.cursorStyle?.remove();
+    state.cursorStyle = null;
+  }
+
   function startAnnotationMode() {
     ensureOverlay();
     if (state.active) return;
     state.active = true;
+    enableAnnotationCursor();
     document.addEventListener('mousemove', onMouseMove, true);
     document.addEventListener('click', onClick, true);
     document.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('scroll', refreshMarkerPositions, true);
     window.addEventListener('resize', refreshMarkerPositions, true);
+    renderMarkers();
     renderToolbar();
   }
 
@@ -200,12 +217,14 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     state.hoveredElement = null;
     state.highlight && (state.highlight.hidden = true);
     closeModal();
+    disableAnnotationCursor();
+    if (state.markerLayer) state.markerLayer.hidden = true;
+    if (state.toolbar) state.toolbar.hidden = true;
     document.removeEventListener('mousemove', onMouseMove, true);
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKeyDown, true);
     window.removeEventListener('scroll', refreshMarkerPositions, true);
     window.removeEventListener('resize', refreshMarkerPositions, true);
-    if (state.toolbar) state.toolbar.hidden = state.annotations.length === 0;
   }
 
   function clearAnnotations() {

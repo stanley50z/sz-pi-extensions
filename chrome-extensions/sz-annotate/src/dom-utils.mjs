@@ -17,3 +17,11 @@ export function isExtensionUiElement(element) {
 export function shouldSubmitCommentKey(event) {
   return event?.key === 'Enter' && !event.shiftKey;
 }
+
+export function getAnnotationCursorCss() {
+  return '* { cursor: default !important; }';
+}
+
+export function shouldShowAnnotationChrome(active) {
+  return Boolean(active);
+}
