@@ -8,5 +8,8 @@ export function isInViewport(rect, viewport = globalThis.window) {
 }
 
 export function isExtensionUiElement(element) {
-  return Boolean(element?.closest?.('[data-sz-annotate-root]'));
+  if (!element) return false;
+  if (element.closest?.('[data-sz-annotate-root]')) return true;
+  const root = element.getRootNode?.();
+  return Boolean(root?.host?.closest?.('[data-sz-annotate-root]'));
 }
