@@ -13,3 +13,7 @@ export function isExtensionUiElement(element) {
   const root = element.getRootNode?.();
   return Boolean(root?.host?.closest?.('[data-sz-annotate-root]'));
 }
+
+export function shouldSubmitCommentKey(event) {
+  return event?.key === 'Enter' && !event.shiftKey;
+}

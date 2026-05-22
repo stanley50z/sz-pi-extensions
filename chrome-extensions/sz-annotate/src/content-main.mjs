@@ -1,6 +1,6 @@
 import { formatAnnotationPrompt } from './formatter.mjs';
 import { collectElementMetadata } from './metadata.mjs';
-import { isExtensionUiElement, isInViewport } from './dom-utils.mjs';
+import { isExtensionUiElement, isInViewport, shouldSubmitCommentKey } from './dom-utils.mjs';
 
 if (!globalThis.__szAnnotateRuntimeLoaded) {
   globalThis.__szAnnotateRuntimeLoaded = true;
@@ -139,13 +139,21 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     const textarea = state.modal.querySelector('textarea');
     queueMicrotask(() => textarea.focus());
     state.modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
-    state.modal.addEventListener('submit', (event) => {
-      event.preventDefault();
+    function saveComment() {
       const comment = textarea.value.trim();
       if (!comment) return;
       state.annotations.push(collectElementMetadata(target, { index: state.annotations.length + 1, comment }));
       closeModal();
       renderMarkers();
+    }
+    textarea.addEventListener('keydown', (event) => {
+      if (!shouldSubmitCommentKey(event)) return;
+      event.preventDefault();
+      saveComment();
+    });
+    state.modal.addEventListener('submit', (event) => {
+      event.preventDefault();
+      saveComment();
     });
   }
 
