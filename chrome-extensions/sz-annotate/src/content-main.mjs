@@ -1,3 +1,4 @@
+import { writePromptAndImageToClipboard } from './clipboard.mjs';
 import { formatAnnotationPrompt } from './formatter.mjs';
 import { collectElementMetadata } from './metadata.mjs';
 import { getAnnotationCursorCss, isExtensionUiElement, isInViewport, shouldShowAnnotationChrome, shouldSubmitCommentKey } from './dom-utils.mjs';
@@ -253,10 +254,6 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     });
   }
 
-  function timestamp() {
-    return new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
-  }
-
   function runtimeMessage(message) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(message, (response) => {
@@ -274,12 +271,7 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
         prepareScreenshot();
         const captured = await runtimeMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB' });
         if (!captured?.ok) throw new Error(captured?.error || 'Screenshot capture failed');
-        const downloaded = await runtimeMessage({
-          type: 'SZ_ANNOTATE_DOWNLOAD_DATA_URL',
-          dataUrl: captured.dataUrl,
-          filename: `sz-annotate-${timestamp()}.png`,
-        });
-        if (!downloaded?.ok) throw new Error(downloaded?.error || 'Screenshot download failed');
+        await writePromptAndImageToClipboard(buildPrompt(true), captured.dataUrl);
         screenshotIncluded = true;
       } catch (error) {
         screenshotError = error.message;
@@ -287,7 +279,9 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
         finishScreenshot();
       }
     }
-    await navigator.clipboard?.writeText?.(buildPrompt(screenshotIncluded, screenshotError));
+    if (!screenshotIncluded) {
+      await navigator.clipboard?.writeText?.(buildPrompt(false, screenshotError));
+    }
   }
 
   function prepareScreenshot() {

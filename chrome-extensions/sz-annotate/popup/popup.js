@@ -1,3 +1,5 @@
+import { writeImageToClipboard, writePromptAndImageToClipboard } from '../src/clipboard.mjs';
+
 const statusEl = document.querySelector('#status');
 const fallbackEl = document.querySelector('#fallback');
 const buttons = {
@@ -89,10 +91,6 @@ async function copyText(markdown) {
   }
 }
 
-function downloadDataUrl(dataUrl, filename) {
-  return chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
-}
-
 function captureVisibleTab(windowId) {
   return new Promise((resolve, reject) => {
     chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
@@ -109,10 +107,6 @@ function captureVisibleTab(windowId) {
   });
 }
 
-function timestamp() {
-  return new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
-}
-
 async function captureScreenshot() {
   const tab = currentTab || await getActiveTab();
   if (!tab?.windowId) throw new Error('No active Chrome window to capture.');
@@ -120,8 +114,7 @@ async function captureScreenshot() {
   if (!prepared.count) throw new Error('No annotations to capture.');
   try {
     const dataUrl = await captureVisibleTab(tab.windowId);
-    await downloadDataUrl(dataUrl, `sz-annotate-${timestamp()}.png`);
-    return prepared.warnings || [];
+    return { dataUrl, warnings: prepared.warnings || [] };
   } finally {
     await sendToActiveTab({ type: 'SZ_ANNOTATE_FINISH_SCREENSHOT' }).catch(() => {});
   }
@@ -165,15 +158,22 @@ buttons.copy.addEventListener('click', async () => {
       return;
     }
     try {
-      warnings = await captureScreenshot();
+      const capture = await captureScreenshot();
+      const response = await sendToActiveTab({ type: 'SZ_ANNOTATE_GET_PROMPT', screenshotIncluded: true });
+      await writePromptAndImageToClipboard(response.markdown, capture.dataUrl);
+      warnings = capture.warnings;
       screenshotIncluded = true;
     } catch (error) {
       screenshotError = error.message;
       setStatus(`Screenshot failed; copying prompt only. ${error.message}`);
     }
-    const response = await sendToActiveTab({ type: 'SZ_ANNOTATE_GET_PROMPT', screenshotIncluded, screenshotError });
-    const copied = await copyText(response.markdown);
-    setStatus(`${copied ? 'Prompt copied' : 'Prompt shown below'}${warnings.length ? ` · ${warnings.length} warning(s)` : ''}`);
+    if (!screenshotIncluded) {
+      const response = await sendToActiveTab({ type: 'SZ_ANNOTATE_GET_PROMPT', screenshotIncluded, screenshotError });
+      const copied = await copyText(response.markdown);
+      setStatus(`${copied ? 'Prompt copied' : 'Prompt shown below'}${warnings.length ? ` · ${warnings.length} warning(s)` : ''}`);
+      return;
+    }
+    setStatus(`Prompt and screenshot copied${warnings.length ? ` · ${warnings.length} warning(s)` : ''}`);
   } catch (error) {
     setStatus(error.message);
   }
@@ -181,8 +181,9 @@ buttons.copy.addEventListener('click', async () => {
 
 buttons.screenshot.addEventListener('click', async () => {
   try {
-    const warnings = await captureScreenshot();
-    setStatus(`Screenshot downloaded${warnings.length ? ` · ${warnings.length} warning(s)` : ''}`);
+    const capture = await captureScreenshot();
+    await writeImageToClipboard(capture.dataUrl);
+    setStatus(`Screenshot copied${capture.warnings.length ? ` · ${capture.warnings.length} warning(s)` : ''}`);
   } catch (error) {
     setStatus(error.message);
   }
