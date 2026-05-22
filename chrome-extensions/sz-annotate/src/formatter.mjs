@@ -21,7 +21,7 @@ function formatStyles(styles = {}) {
     .join('; ');
 }
 
-export function formatAnnotationPrompt({ url, viewport, annotations, screenshotIncluded }) {
+export function formatAnnotationPrompt({ url, viewport, annotations, screenshotIncluded, screenshotError }) {
   const lines = [
     '# UI Annotations',
     '',
@@ -30,8 +30,13 @@ export function formatAnnotationPrompt({ url, viewport, annotations, screenshotI
     screenshotIncluded
       ? 'Screenshot: Combined screenshot contains numbered highlights matching the annotations below.'
       : 'Screenshot: Not included or capture failed.',
-    '',
   ];
+
+  if (!screenshotIncluded && screenshotError) {
+    lines.push(`Screenshot error: ${screenshotError}`);
+  }
+
+  lines.push('');
 
   if (!annotations?.length) {
     lines.push('No annotations captured.');

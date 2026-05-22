@@ -45,3 +45,16 @@ test('formats empty annotations with a useful message', () => {
 
   assert.match(markdown, /No annotations captured/);
 });
+
+test('includes screenshot failure reason when capture fails', () => {
+  const markdown = formatAnnotationPrompt({
+    url: 'http://localhost:3000',
+    viewport: { width: 390, height: 844 },
+    screenshotIncluded: false,
+    screenshotError: 'The activeTab permission is not in effect.',
+    annotations: [{ index: 1, tagName: 'p', selector: 'p', comment: 'Fix copy' }],
+  });
+
+  assert.match(markdown, /Screenshot: Not included or capture failed\./);
+  assert.match(markdown, /Screenshot error: The activeTab permission is not in effect\./);
+});

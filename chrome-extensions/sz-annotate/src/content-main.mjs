@@ -216,11 +216,12 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
     }
   }
 
-  function buildPrompt(screenshotIncluded) {
+  function buildPrompt(screenshotIncluded, screenshotError) {
     return formatAnnotationPrompt({
       url: location.href,
       viewport: { width: window.innerWidth, height: window.innerHeight },
       screenshotIncluded,
+      screenshotError,
       annotations: state.annotations,
     });
   }
@@ -268,7 +269,7 @@ if (!globalThis.__szAnnotateRuntimeLoaded) {
       else if (message.type === 'SZ_ANNOTATE_START') { startAnnotationMode(); sendResponse({ ok: true, active: true, count: state.annotations.length }); }
       else if (message.type === 'SZ_ANNOTATE_STOP') { stopAnnotationMode(); sendResponse({ ok: true, active: false, count: state.annotations.length }); }
       else if (message.type === 'SZ_ANNOTATE_CLEAR') { clearAnnotations(); sendResponse({ ok: true, active: state.active, count: 0 }); }
-      else if (message.type === 'SZ_ANNOTATE_GET_PROMPT') sendResponse({ ok: true, count: state.annotations.length, markdown: buildPrompt(Boolean(message.screenshotIncluded)) });
+      else if (message.type === 'SZ_ANNOTATE_GET_PROMPT') sendResponse({ ok: true, count: state.annotations.length, markdown: buildPrompt(Boolean(message.screenshotIncluded), message.screenshotError) });
       else if (message.type === 'SZ_ANNOTATE_PREPARE_SCREENSHOT') sendResponse({ ok: true, count: state.annotations.length, warnings: prepareScreenshot() });
       else if (message.type === 'SZ_ANNOTATE_FINISH_SCREENSHOT') { finishScreenshot(); sendResponse({ ok: true }); }
       else return false;

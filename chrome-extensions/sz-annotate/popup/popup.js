@@ -93,6 +93,22 @@ function downloadDataUrl(dataUrl, filename) {
   return chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
 }
 
+function captureVisibleTab(windowId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!dataUrl) {
+        reject(new Error('Chrome returned an empty screenshot.'));
+        return;
+      }
+      resolve(dataUrl);
+    });
+  });
+}
+
 function timestamp() {
   return new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
 }
@@ -103,9 +119,8 @@ async function captureScreenshot() {
   const prepared = await sendToActiveTab({ type: 'SZ_ANNOTATE_PREPARE_SCREENSHOT' });
   if (!prepared.count) throw new Error('No annotations to capture.');
   try {
-    const captured = await chrome.runtime.sendMessage({ type: 'SZ_ANNOTATE_CAPTURE_VISIBLE_TAB', windowId: tab.windowId });
-    if (!captured?.ok) throw new Error(captured?.error || 'Screenshot capture failed');
-    await downloadDataUrl(captured.dataUrl, `sz-annotate-${timestamp()}.png`);
+    const dataUrl = await captureVisibleTab(tab.windowId);
+    await downloadDataUrl(dataUrl, `sz-annotate-${timestamp()}.png`);
     return prepared.warnings || [];
   } finally {
     await sendToActiveTab({ type: 'SZ_ANNOTATE_FINISH_SCREENSHOT' }).catch(() => {});
@@ -142,6 +157,7 @@ buttons.clear.addEventListener('click', async () => {
 buttons.copy.addEventListener('click', async () => {
   try {
     let screenshotIncluded = false;
+    let screenshotError = '';
     let warnings = [];
     const status = await sendToActiveTab({ type: 'SZ_ANNOTATE_STATUS' });
     if (!status.count) {
@@ -152,9 +168,10 @@ buttons.copy.addEventListener('click', async () => {
       warnings = await captureScreenshot();
       screenshotIncluded = true;
     } catch (error) {
+      screenshotError = error.message;
       setStatus(`Screenshot failed; copying prompt only. ${error.message}`);
     }
-    const response = await sendToActiveTab({ type: 'SZ_ANNOTATE_GET_PROMPT', screenshotIncluded });
+    const response = await sendToActiveTab({ type: 'SZ_ANNOTATE_GET_PROMPT', screenshotIncluded, screenshotError });
     const copied = await copyText(response.markdown);
     setStatus(`${copied ? 'Prompt copied' : 'Prompt shown below'}${warnings.length ? ` · ${warnings.length} warning(s)` : ''}`);
   } catch (error) {
