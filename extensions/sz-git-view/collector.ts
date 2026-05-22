@@ -114,7 +114,9 @@ function collectWorktrees(): WorktreeEntry[] {
       stdio: ["pipe", "pipe", "pipe"],
       timeout: GIT_TIMEOUT,
     }).trim();
-    return out ? parseGitWorktree(out) : [];
+    // git worktree list includes the primary checkout first. The panel should
+    // only show linked side worktrees, not the main repository checkout.
+    return out ? parseGitWorktree(out).slice(1) : [];
   } catch {
     return [];
   }

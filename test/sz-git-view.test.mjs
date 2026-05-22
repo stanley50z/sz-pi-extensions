@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
@@ -162,6 +162,32 @@ test('Git View collector preserves the first path character for modified worktre
 
     assert.equal(data.error, undefined);
     assert.equal(data.status[0]?.path, 'extensions/sz-git-view/collector.ts');
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
+
+test('Git View collector excludes the primary checkout from worktrees', async () => {
+  const originalCwd = process.cwd();
+  const parent = await mkdtemp(join(tmpdir(), 'sz-git-view-worktrees-'));
+  const repo = join(parent, 'main');
+  const side = join(parent, 'side');
+
+  try {
+    await mkdir(repo, { recursive: true });
+    git(['init'], repo);
+    await writeFile(join(repo, 'file.txt'), 'hello\n', 'utf8');
+    git(['add', 'file.txt'], repo);
+    git(['commit', '-m', 'initial'], repo);
+    git(['worktree', 'add', '-b', 'side', side], repo);
+    process.chdir(repo);
+
+    const { collectAll } = await freshCollectorModule();
+    const data = collectAll();
+
+    assert.equal(data.error, undefined);
+    assert.deepEqual(data.worktrees.map((entry) => entry.path), [await realpath(side)]);
+    assert.equal(data.worktrees[0]?.branch, 'refs/heads/side');
   } finally {
     process.chdir(originalCwd);
   }
