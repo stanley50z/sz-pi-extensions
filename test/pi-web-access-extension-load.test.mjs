@@ -4,30 +4,52 @@ import { spawn } from 'node:child_process';
 
 function runPiLoadCheck() {
   return new Promise((resolve) => {
-    const child = spawn('pi', [
+    const piArgs = [
       '--offline',
       '--no-extensions',
       '-e',
       './extensions/pi-web-access/index.ts',
       '--list-models',
-    ], {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
+    ];
+    const useWindowsShell = process.platform === 'win32';
+    const piCommand = useWindowsShell ? `pi.cmd ${piArgs.join(' ')}` : 'pi';
+    const spawnArgs = useWindowsShell ? [] : piArgs;
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
+    let timer;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    let child;
+    try {
+      child = spawn(piCommand, spawnArgs, {
+        cwd: process.cwd(),
+        env: process.env,
+        shell: useWindowsShell,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      finish({ code: null, stdout, stderr: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    timer = setTimeout(() => {
       child.kill('SIGKILL');
-      resolve({ code: null, stdout, stderr: stderr + '\n[TIMEOUT]' });
+      finish({ code: null, stdout, stderr: stderr + '\n[TIMEOUT]' });
     }, 60_000);
 
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (err) => {
+      finish({ code: null, stdout, stderr: `${stderr}\n${err.message}` });
+    });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      finish({ code, stdout, stderr });
     });
   });
 }

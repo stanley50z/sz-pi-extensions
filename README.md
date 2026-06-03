@@ -15,17 +15,14 @@ This package currently includes UI/automation helpers plus a trimmed web access 
 
 ## Install
 
-Install this package into Pi from GitHub:
+Clone the repo to your user root, then install the local path:
 
 ```bash
-pi install git:github.com/stanley50z/sz-pi-extensions
+git clone https://github.com/stanley50z/sz-pi-extensions.git ~/sz-pi-extensions
+pi install ~/sz-pi-extensions
 ```
 
-For local development, run Pi with this package path or install it locally:
-
-```bash
-pi install /path/to/sz-pi-extensions
-```
+This keeps the package editable — changes you make are live after restarting Pi. No sync step needed.
 
 Pi discovers extensions and skills from the package manifest in `package.json`:
 

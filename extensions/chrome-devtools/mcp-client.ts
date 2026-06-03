@@ -86,14 +86,18 @@ export class McpClient {
     return args;
   }
 
-  private resolveBinary(): string {
+  private resolveScript(): { command: string; args: string[] } | null {
     const __dirname = dirname(fileURLToPath(import.meta.url));
-    const localBin = join(__dirname, "..", "..", "node_modules", ".bin", "chrome-devtools-mcp");
+    // Resolve the actual JS entry point, not the shell wrapper
+    const scriptPath = join(
+      __dirname, "..", "..", "node_modules", "chrome-devtools-mcp",
+      "build", "src", "bin", "chrome-devtools-mcp.js",
+    );
     try {
-      statSync(localBin);
-      return localBin;
+      statSync(scriptPath);
+      return { command: process.execPath, args: [scriptPath] };
     } catch {
-      return "npx";
+      return null;
     }
   }
 
@@ -101,11 +105,19 @@ export class McpClient {
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const binary = this.resolveBinary();
-      const cliArgs = this.buildArgs();
-      // npx needs "chrome-devtools-mcp@latest" as first arg
-      const cmdArgs = binary === "npx" ? ["chrome-devtools-mcp@latest", "--no-usage-statistics", ...cliArgs] : cliArgs;
-      this.process = spawn(binary, cmdArgs, {
+      const resolved = this.resolveScript();
+      let command: string;
+      let cmdArgs: string[];
+      if (resolved) {
+        // Run node directly with the script — works cross-platform without shell
+        command = resolved.command;
+        cmdArgs = [...resolved.args, ...this.buildArgs()];
+      } else {
+        // Fallback to npx
+        command = "npx";
+        cmdArgs = ["chrome-devtools-mcp@latest", "--no-usage-statistics", ...this.buildArgs()];
+      }
+      this.process = spawn(command, cmdArgs, {
         stdio: ["pipe", "pipe", "pipe"],
       });
 
