@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import net from 'node:net';
 
 const moduleUrl = new URL('../extensions/sz-git-view/index.ts', import.meta.url).href;
@@ -186,7 +186,10 @@ test('Git View collector excludes the primary checkout from worktrees', async ()
     const data = collectAll();
 
     assert.equal(data.error, undefined);
-    assert.deepEqual(data.worktrees.map((entry) => entry.path), [await realpath(side)]);
+    assert.deepEqual(
+      data.worktrees.map((entry) => entry.path.replaceAll('\\', '/')),
+      [(await realpath(side)).replaceAll('\\', '/')],
+    );
     assert.equal(data.worktrees[0]?.branch, 'refs/heads/side');
   } finally {
     process.chdir(originalCwd);
@@ -214,7 +217,7 @@ test('Git View sends full repo data to a browser that connects after startup bro
 
     assert.equal(message.type, 'full');
     assert.equal(message.error, null);
-    assert.equal(message.repoName, repo.split('/').at(-1));
+    assert.equal(message.repoName, basename(repo));
     assert.ok(message.commits.length >= 1);
   } finally {
     await pi.handlers.get('session_shutdown')?.({ reason: 'quit' }, ctx);

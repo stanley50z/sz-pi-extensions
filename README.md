@@ -2,14 +2,13 @@
 
 A personal Pi package with custom extensions and skills for the [Pi coding agent](https://github.com/earendil-works/pi-coding-agent).
 
-This package currently includes UI/automation helpers plus a trimmed web access extension that supports **Exa** and **Brave Search** without Perplexity or Gemini dependencies.
+This package includes UI and automation helpers. Live-source research is delegated to [Ketch](https://github.com/1broseidon/ketch) instead of being implemented as a separate Pi extension.
 
 ## Features
 
-- **Web search** via Exa or Brave Search
-- **Code/documentation search** via Exa MCP
-- **Readable content extraction** for web pages, PDFs, and GitHub repositories
-- **Stored search/fetch results** retrievable across the current Pi session
+- **Web research** through Ketch, including Brave and Exa search backends
+- **Code and documentation search** through Ketch
+- **Web page, PDF, and site extraction** through Ketch
 - **Chrome DevTools MCP** integration
 - **Git view** and other local workflow helpers
 
@@ -19,10 +18,12 @@ Clone the repo to your user root, then install the local path:
 
 ```bash
 git clone https://github.com/stanley50z/sz-pi-extensions.git ~/sz-pi-extensions
+cd ~/sz-pi-extensions
+npm install
 pi install ~/sz-pi-extensions
 ```
 
-This keeps the package editable — changes you make are live after restarting Pi. No sync step needed.
+This keeps the package editable — changes you make are live after restarting Pi. No sync step needed. The npm install also clones [Ketch](https://github.com/1broseidon/ketch) into `node_modules/ketch` and exposes its Pi skill. Because `node_modules/` is ignored, the Ketch checkout remains separate from this repository's tracked files.
 
 Pi discovers extensions and skills from the package manifest in `package.json`:
 
@@ -30,128 +31,35 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 {
   "pi": {
     "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "skills": ["./skills", "node_modules/ketch/skills/ketch"]
   }
 }
 ```
 
-## Configuration
+## Ketch
 
-Create a `.env` file in your project directory or any parent directory:
+Pi discovers Ketch's bundled skill from the ignored checkout and uses the `ketch` CLI as its research transport. The CLI must be available on `PATH`; install it using one of Ketch's supported methods if needed:
 
-```dotenv
-EXA_API_KEY=exa-...
-BRAVE_API_KEY=...
+```bash
+go install github.com/1broseidon/ketch@latest
 ```
 
-Environment variables already exported in your shell take precedence over `.env` values.
+Configure providers through Ketch rather than this package:
 
-### Provider notes
+```bash
+ketch config
+ketch config set backend brave
+ketch config set brave_api_key <key>
+ketch config set exa_api_key <key>
+ketch doctor --json
+```
 
-- `EXA_API_KEY` is optional for basic Exa MCP-backed search, but recommended for direct Exa API access.
-- `BRAVE_API_KEY` is required when using Brave Search.
-- `.env` is ignored by git. Use `.env.example` as the committed template.
+Ketch also supports keyless backends such as DuckDuckGo and Keenable. Pi's Ketch skill routes live web search, code search, documentation lookup, page scraping, and site crawling to the appropriate Ketch surface.
 
 
 ## Chrome Annotation MVP
 
 This repo includes a standalone Chrome extension at `chrome-extensions/sz-annotate/` for local UI annotation. It is not a Pi extension yet. Load it unpacked in Chrome, annotate localhost pages, copy the generated Markdown prompt, and attach the combined highlighted screenshot manually.
-
-## Tools
-
-### `web_search`
-
-Search the web with Exa or Brave Search.
-
-```ts
-web_search({ query: "Apple latest earnings" })
-web_search({ queries: ["React 19 migration", "React 19 breaking changes"] })
-web_search({ query: "AAPL closing price", provider: "brave" })
-web_search({ query: "TypeScript release notes", provider: "exa", numResults: 10 })
-```
-
-Parameters:
-
-| Parameter | Description |
-| --- | --- |
-| `query` | Single search query |
-| `queries` | Multiple queries searched in sequence |
-| `numResults` | Results per query, default `5`, max `20` |
-| `includeContent` | Fetch source page content in the background |
-| `recencyFilter` | `day`, `week`, `month`, or `year` |
-| `domainFilter` | Limit to domains; prefix with `-` to exclude |
-| `provider` | `auto`, `exa`, or `brave` |
-
-Provider behavior in `auto` mode:
-
-1. Try Exa first.
-2. Fall back to Brave when `BRAVE_API_KEY` is configured.
-
-### `code_search`
-
-Search for code examples, API references, and technical documentation through Exa MCP.
-
-```ts
-code_search({ query: "TypeScript satisfies operator examples" })
-code_search({ query: "Radix dialog accessibility patterns", maxTokens: 10000 })
-```
-
-Parameters:
-
-| Parameter | Description |
-| --- | --- |
-| `query` | Programming question, API, library, or debugging topic |
-| `maxTokens` | Maximum returned context, default `5000`, max `50000` |
-
-### `fetch_content`
-
-Fetch URLs and extract readable markdown content.
-
-```ts
-fetch_content({ url: "https://example.com/article" })
-fetch_content({ urls: ["https://example.com/a", "https://example.com/b"] })
-fetch_content({ url: "https://github.com/owner/repo" })
-fetch_content({ url: "https://example.com/report.pdf" })
-```
-
-Supported content:
-
-- Regular web pages
-- PDFs
-- GitHub repositories, directories, and files
-- Plain text / markdown / JSON responses
-
-Parameters:
-
-| Parameter | Description |
-| --- | --- |
-| `url` | Single URL |
-| `urls` | Multiple URLs |
-| `forceClone` | Clone GitHub repositories that exceed the default size threshold |
-
-### `get_search_content`
-
-Retrieve stored search or fetch results from the current Pi session.
-
-```ts
-get_search_content({ list: true })
-get_search_content({ responseId: "abc123" })
-get_search_content({ responseId: "abc123", urlIndex: 0 })
-get_search_content({ responseId: "abc123", query: "original query" })
-```
-
-## What is intentionally excluded
-
-This package intentionally does **not** include:
-
-- Perplexity support
-- Gemini API support
-- Gemini Web/browser-cookie support
-- YouTube video understanding
-- Local video analysis or frame extraction
-- Browser cookie extraction for Google/Gemini accounts
-
-Those features were removed because they depend on paid API keys, account cookies, or provider-specific access outside the Exa/Brave search scope.
 
 ## Development
 
@@ -167,23 +75,18 @@ Run tests:
 npm test
 ```
 
-Verify the web access extension loads in Pi:
+Verify the package loads in Pi:
 
 ```bash
-pi --offline --no-extensions -e ./extensions/pi-web-access/index.ts --list-models
+pi --offline --no-extensions -e . --list-models
 ```
 
 ## Security
 
 Do not commit API keys or credentials.
 
-- `.env` is gitignored.
-- `.env.example` is safe to commit and contains only empty placeholders.
 - Extensions run with local system permissions, so review code before installing packages from third parties.
-
-## Attribution
-
-The `pi-web-access` extension in this package is based on ideas and selected non-Gemini/non-Perplexity components from [`nicobailon/pi-web-access`](https://github.com/nicobailon/pi-web-access), adapted for this package with Exa + Brave Search support.
+- Ketch configuration stores provider credentials outside this repository.
 
 ## License
 

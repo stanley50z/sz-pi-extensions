@@ -1,7 +1,7 @@
 {
   "name": "sz-pi-extensions",
   "version": "1.0.0",
-  "description": "SZ pi extensions — enhanced footer, git view, chrome devtools, web access, and more",
+  "description": "SZ pi extensions — enhanced footer, git view, Chrome DevTools, Ketch research, and more",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -9,24 +9,29 @@
   ],
   "scripts": {
     "build:git-view-css": "BROWSERSLIST_IGNORE_OLD_DATA=1 tailwindcss -c extensions/sz-git-view/tailwind.config.cjs -i extensions/sz-git-view/src/git-view.css -o extensions/sz-git-view/dist/git-view.css --minify",
+    "postinstall": "node ./scripts/install-ketch.mjs",
     "test": "node --test"
   },
+  "bundledDependencies": ["pi-subagents"],
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions",
+      "node_modules/pi-subagents/src/extension/index.ts"
     ],
     "skills": [
-      "./skills"
+      "./skills",
+      "node_modules/pi-subagents/skills",
+      "node_modules/ketch/skills/ketch"
+    ],
+    "prompts": [
+      "node_modules/pi-subagents/prompts"
     ]
   },
   "dependencies": {
-    "@mozilla/readability": "^0.5.0",
+    "pi-subagents": "^0.28.0",
     "chrome-devtools-mcp": "^0.26.0",
     "linkedom": "^0.16.11",
-    "p-limit": "^6.2.0",
-    "turndown": "^7.2.4",
-    "typebox": "*",
-    "unpdf": "^1.6.2"
+    "typebox": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
