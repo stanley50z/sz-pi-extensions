@@ -6,6 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TObject } from "typebox";
 import { McpClient, type McpConfig, type McpToolDefinition } from "./mcp-client.js";
 import { jsonSchemaToTypeBox } from "./schema-convert.js";
+import { announceChromeReady } from "./events.ts";
 
 // ── Configuration ──────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ export default function (pi: ExtensionAPI) {
 
     client.ensureRunning()
       .then(() => registerTools())
-      .then(() => ctx.ui?.notify?.("Chrome DevTools MCP ready", "info"))
+      .then(() => announceChromeReady(pi, ctx))
       .catch((err: any) => ctx.ui?.notify?.(`Chrome DevTools MCP: ${err.message}`, "error"));
   });
 

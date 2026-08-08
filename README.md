@@ -11,6 +11,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Web page, PDF, and site extraction** through Ketch
 - **Chrome DevTools MCP** integration
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
+- **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Git view** and other local workflow helpers
 
 ## Install
