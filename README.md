@@ -13,7 +13,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Structured user questions** through the `ask_user` tool
 - **Session transcript copying** through `/copy-all`
 - **First-class local search** through `find_files` and `search_text`
-- **Minimal built-in tool output** with results shown only when expanded
+- **Compact built-in tool output** with highlighted one-line cards, grouped consecutive calls, and results shown only when expanded
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Git view** and other local workflow helpers
