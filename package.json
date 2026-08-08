@@ -12,23 +12,20 @@
     "postinstall": "node ./scripts/install-ketch.mjs",
     "test": "node --test"
   },
-  "bundledDependencies": ["pi-subagents"],
+  "bundledDependencies": ["sz-pi-subagents"],
   "pi": {
     "extensions": [
       "./extensions",
-      "node_modules/pi-subagents/src/extension/index.ts"
+      "node_modules/sz-pi-subagents/extensions/subagents/index.ts"
     ],
     "skills": [
       "./skills",
-      "node_modules/pi-subagents/skills",
+      "node_modules/sz-pi-subagents/skills",
       "node_modules/ketch/skills/ketch"
-    ],
-    "prompts": [
-      "node_modules/pi-subagents/prompts"
     ]
   },
   "dependencies": {
-    "pi-subagents": "^0.28.0",
+    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/3e2b85c.tar.gz",
     "chrome-devtools-mcp": "^0.26.0",
     "linkedom": "^0.16.11",
     "typebox": "*"
