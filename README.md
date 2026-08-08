@@ -10,6 +10,10 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Code and documentation search** through Ketch
 - **Web page, PDF, and site extraction** through Ketch
 - **Chrome DevTools MCP** integration
+- **Structured user questions** through the `ask_user` tool
+- **Session transcript copying** through `/copy-all`
+- **First-class local search** through `find_files` and `search_text`
+- **Minimal built-in tool output** with results shown only when expanded
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Git view** and other local workflow helpers
@@ -44,6 +48,14 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
   }
 }
 ```
+
+## Local workflow tools
+
+`ask_user` presents two to five choices and always includes a free-form answer. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
+
+`find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
+
+Built-in file and shell tools keep their normal call lines but hide result bodies while collapsed; expand a tool row to inspect its output.
 
 ## Subagents
 
@@ -100,6 +112,10 @@ Do not commit API keys or credentials.
 
 - Extensions run with local system permissions, so review code before installing packages from third parties.
 - Ketch configuration stores provider credentials outside this repository.
+
+## Acknowledgments
+
+The native workflow-tool ideas were inspired by [Ben Davis's `my-pi-setup`](https://github.com/davis7dotsh/my-pi-setup) and independently implemented here.
 
 ## License
 
