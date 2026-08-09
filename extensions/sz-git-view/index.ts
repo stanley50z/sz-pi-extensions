@@ -1,7 +1,7 @@
 // extensions/sz-git-view/index.ts
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createGitViewServer } from "./server.ts";
-import { collectAll, getDiffForPath } from "./collector.ts";
+import { collectAll, getDiffForPath, resolveGitRoot } from "./collector.ts";
 import type { GitData } from "./collector.ts";
 import { getHtmlTemplate } from "./template.ts";
 
@@ -21,11 +21,12 @@ export default async function (pi: ExtensionAPI) {
   const server = createGitViewServer();
   let port: number | null = null;
   let ctx: ExtensionContext | null = null;
+  let repoRoot: string | null = null;
 
   // ── Client → Server message handler ─────────────────────────────────
   server.onMessage = (type, payload) => {
-    if (type === "get-diff" && payload?.path) {
-      const diff = getDiffForPath(payload.path);
+    if (type === "get-diff" && payload?.path && repoRoot) {
+      const diff = getDiffForPath(payload.path, repoRoot);
       server.broadcast({ type: "diff", path: payload.path, content: diff || "" });
     } else if (type === "load-more") {
       // Re-broadcast full data (client already has it; future: pagination)
@@ -39,9 +40,9 @@ export default async function (pi: ExtensionAPI) {
 
   // ── Push data to all connected clients ──────────────────────────────
   function pushData() {
-    if (!server || port === null) return;
+    if (!server || port === null || !repoRoot) return;
     try {
-      const data: GitData = collectAll();
+      const data: GitData = collectAll(repoRoot);
       const payload: any = {
         type: "full",
         repoName: data.repoName,
@@ -59,6 +60,14 @@ export default async function (pi: ExtensionAPI) {
   // ── Server lifecycle ────────────────────────────────────────────────
   pi.on("session_start", async (_event, extensionCtx) => {
     ctx = extensionCtx;
+    const sessionCwd = typeof ctx.sessionManager?.getCwd === "function"
+      ? ctx.sessionManager.getCwd()
+      : ctx.cwd;
+    repoRoot = resolveGitRoot(sessionCwd);
+    if (!repoRoot) {
+      publishGitViewUrl(pi, null);
+      return;
+    }
     try {
       const template = getHtmlTemplate();
       port = await server.start(template);
@@ -73,6 +82,8 @@ export default async function (pi: ExtensionAPI) {
       // Push initial data after a short delay to let the client connect
       setTimeout(() => pushData(), 1000);
     } catch (err: any) {
+      repoRoot = null;
+      publishGitViewUrl(pi, null);
       if (ctx.ui?.notify) {
         ctx.ui.notify(`Git view failed: ${err.message}`, "error");
       }
@@ -82,6 +93,7 @@ export default async function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     server.stop();
     port = null;
+    repoRoot = null;
     publishGitViewUrl(pi, null);
   });
 

@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const moduleUrl = new URL('../extensions/openai-fast-mode.ts', import.meta.url).href;
+
+function createAgentDir() {
+  return mkdtempSync(join(tmpdir(), 'pi-fast-mode-'));
+}
+
+async function waitUntil(predicate, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail('Timed out waiting for fast mode state to synchronize');
+}
 
 async function freshFastModeModule() {
   return import(`${moduleUrl}?t=${Date.now()}-${Math.random()}`);
@@ -46,11 +62,18 @@ function createFakeContext(model = { provider: 'openai', id: 'gpt-5.5', api: 'op
   };
 }
 
-async function install(flags) {
-  const { default: installFastMode } = await freshFastModeModule();
-  const pi = createFakePi(flags);
-  installFastMode(pi);
-  return pi;
+async function install(flags, agentDir = createAgentDir()) {
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    const { default: installFastMode } = await freshFastModeModule();
+    const pi = createFakePi(flags);
+    installFastMode(pi);
+    return pi;
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  }
 }
 
 test('/fast is registered and toggles fast mode with status indicator', async () => {
@@ -62,7 +85,7 @@ test('/fast is registered and toggles fast mode with status indicator', async ()
 
   await pi.commands.get('fast').handler('', ctx);
   assert.deepEqual(ctx.notifications.at(-1), { message: 'Fast mode: on', type: 'info' });
-  assert.deepEqual(ctx.statuses.at(-1), { key: 'openai-fast-mode', text: '⚡ fast' });
+  assert.deepEqual(ctx.statuses.at(-1), { key: 'openai-fast-mode', text: '⚡fast' });
 
   await pi.commands.get('fast').handler('', ctx);
   assert.deepEqual(ctx.notifications.at(-1), { message: 'Fast mode: off', type: 'info' });
@@ -90,6 +113,61 @@ test('--fast starts fast mode enabled on session start', async () => {
   await pi.commands.get('fast').handler('status', ctx);
 
   assert.deepEqual(ctx.notifications.at(-1), { message: 'Fast mode: on (supported)', type: 'info' });
+});
+
+test('fast mode is remembered by new Pi sessions', async () => {
+  const agentDir = createAgentDir();
+  const firstPi = await install({}, agentDir);
+  const firstCtx = createFakeContext();
+
+  await firstPi.handlers.get('session_start')({}, firstCtx);
+  await firstPi.commands.get('fast').handler('on', firstCtx);
+  await firstPi.handlers.get('session_shutdown')?.({}, firstCtx);
+
+  const restartedPi = await install({}, agentDir);
+  const restartedCtx = createFakeContext();
+  await restartedPi.handlers.get('session_start')({}, restartedCtx);
+  await restartedPi.commands.get('fast').handler('status', restartedCtx);
+
+  assert.deepEqual(restartedCtx.notifications.at(-1), { message: 'Fast mode: on (supported)', type: 'info' });
+  await restartedPi.handlers.get('session_shutdown')?.({}, restartedCtx);
+});
+
+test('toggling fast mode synchronizes all running Pi sessions and Codex children', async (t) => {
+  const previousFastMode = process.env.PI_OPENAI_FAST_MODE;
+  t.after(() => {
+    if (previousFastMode === undefined) delete process.env.PI_OPENAI_FAST_MODE;
+    else process.env.PI_OPENAI_FAST_MODE = previousFastMode;
+  });
+
+  const agentDir = createAgentDir();
+  const firstPi = await install({}, agentDir);
+  const secondPi = await install({}, agentDir);
+  const firstCtx = createFakeContext();
+  const secondCtx = createFakeContext();
+  const request = { payload: { model: 'gpt-5.6-sol', input: [] } };
+
+  await firstPi.handlers.get('session_start')({}, firstCtx);
+  await secondPi.handlers.get('session_start')({}, secondCtx);
+
+  await firstPi.commands.get('fast').handler('on', firstCtx);
+  assert.equal(process.env.PI_OPENAI_FAST_MODE, '1');
+  await waitUntil(async () => {
+    const result = await secondPi.handlers.get('before_provider_request')(request, secondCtx);
+    return result?.service_tier === 'priority';
+  });
+  assert.deepEqual(secondCtx.statuses.at(-1), { key: 'openai-fast-mode', text: '⚡fast' });
+
+  await secondPi.commands.get('fast').handler('off', secondCtx);
+  assert.equal(process.env.PI_OPENAI_FAST_MODE, '0');
+  await waitUntil(async () => {
+    const result = await firstPi.handlers.get('before_provider_request')(request, firstCtx);
+    return result === undefined;
+  });
+  assert.deepEqual(firstCtx.statuses.at(-1), { key: 'openai-fast-mode', text: undefined });
+
+  await firstPi.handlers.get('session_shutdown')?.({}, firstCtx);
+  await secondPi.handlers.get('session_shutdown')?.({}, secondCtx);
 });
 
 test('invalid /fast arguments notify an error', async () => {

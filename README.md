@@ -14,9 +14,10 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Structured user questions** through the `ask_user` tool
 - **Session transcript copying** through `/copy-all`
 - **First-class local search** through `find_files` and `search_text`
-- **Compact built-in tool output** with highlighted one-line cards, grouped consecutive calls, and results shown only when expanded
+- **Compact built-in tool output** with Ctrl+O switching between grouped one-line cards and an ultra-collapsed tool-call count
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
+- **Persistent, synchronized OpenAI fast mode** through `/fast`
 - **Git view** and other local workflow helpers
 
 ## Install
@@ -56,11 +57,19 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file. Their collapsed tool rows stay on one line and reveal result bodies only when expanded.
 
-Built-in file and shell tools keep their normal call lines but hide result bodies while collapsed; expand a tool row to inspect its output.
+Built-in file and shell tools never render result bodies or image previews. Press Ctrl+O to switch between the collapsed view (grouped one-line call cards) and the ultra-collapsed view, where each `N tool calls` summary is attached to its one-line narration and consecutive tool-only turns are combined.
+
+Git View and the footer's clickable change count activate only when the current session working directory belongs to a Git repository.
+
+## Fast mode
+
+Use `/fast`, `/fast on`, or `/fast off` to control OpenAI priority processing. The setting is stored in `~/.pi/agent/openai-fast-mode.json` (or the configured `PI_CODING_AGENT_DIR`) and restored when Pi starts. Changes are synchronized to every currently running Pi session, including native Pi subagents. Codex subagents inherit the same state as Codex's `priority` service tier and refresh it before every turn. The Pi provider hook applies only to models using the OpenAI Responses or OpenAI Codex Responses APIs.
 
 ## Subagents
 
 [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) is maintained as an independent public package but composed here as a pinned dependency. Pi still installs only `sz-pi-extensions`; this package loads the dependency's extension and skill. It provides the complete subagent implementation through persistent native Pi, Codex, and Claude Code sessions.
+
+Native Pi subagents load the fast-mode extension and share its synchronized state. Codex subagents receive that state through the Codex app-server `serviceTier` setting. Claude Code uses its own harness, so Pi's `/fast` setting does not apply to Claude children.
 
 ## Ketch
 

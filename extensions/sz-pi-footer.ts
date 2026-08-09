@@ -11,10 +11,15 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { hyperlink, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import {
+  readCodexRateLimits,
+  type CodexRateLimitWindow,
+} from "../lib/codex-rate-limits.ts";
 
 const STATUS_KEY = "sz-footer";
 const GIT_VIEW_URL_EVENT = "sz-git-view:url";
+const CODEX_RATE_LIMITS_EVENT = "sz-codex-rate-limits:update";
 const GIT_VIEW_URL_GLOBAL_KEY = "__SZ_GIT_VIEW_URL__";
 
 type GlobalWithGitViewUrl = typeof globalThis & {
@@ -33,17 +38,55 @@ function extractGitViewUrl(data: unknown): string | null | undefined {
   return typeof url === "string" && url.length > 0 ? url : undefined;
 }
 
+function extractCodexRateLimitWindows(data: unknown): CodexRateLimitWindow[] | undefined {
+  if (!data || typeof data !== "object" || !("windows" in data)) return undefined;
+  const windows = (data as { windows?: unknown }).windows;
+  if (!Array.isArray(windows)) return undefined;
+
+  const parsed: CodexRateLimitWindow[] = [];
+  for (const window of windows) {
+    if (!window || typeof window !== "object") return undefined;
+    const { usedPercent, windowDurationMins } = window as Record<string, unknown>;
+    if (
+      typeof usedPercent !== "number" ||
+      !Number.isFinite(usedPercent) ||
+      typeof windowDurationMins !== "number" ||
+      !Number.isSafeInteger(windowDurationMins) ||
+      windowDurationMins <= 0
+    ) {
+      return undefined;
+    }
+    parsed.push({ usedPercent, windowDurationMins });
+  }
+  return parsed;
+}
+
+function formatCodexRateLimits(
+  status: "hidden" | "loading" | "ready" | "error",
+  windows: CodexRateLimitWindow[] | null,
+): string | null {
+  if (status === "hidden") return null;
+  if (status === "loading") return "5h:… wk:…";
+  if (status === "error") return "5h:! wk:!";
+
+  const percentageFor = (duration: number) => {
+    const window = windows?.find((candidate) => candidate.windowDurationMins === duration);
+    return window ? `${Math.round(window.usedPercent)}%` : "—";
+  };
+  return `5h:${percentageFor(300)} wk:${percentageFor(10080)}`;
+}
+
 // ── git diff helpers ──────────────────────────────────────────────────
 
-function getDiffStats(): string | null {
+function getDiffStats(cwd: string): string | null {
   try {
-    execSync("git rev-parse --git-dir", {
+    execFileSync("git", ["-C", cwd, "rev-parse", "--git-dir"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 3000,
     });
 
-    const out = execSync("git diff --shortstat HEAD", {
+    const out = execFileSync("git", ["-C", cwd, "diff", "--shortstat", "HEAD"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 3000,
@@ -74,9 +117,27 @@ function formatTokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
+const costFormatter = new Intl.NumberFormat("en-US", {
+  minimumSignificantDigits: 3,
+  maximumSignificantDigits: 3,
+  useGrouping: false,
+});
+
+function formatCost(cost: number): string {
+  return costFormatter.format(cost);
+}
+
 function compactPath(path: string): string {
   const home = process.env.HOME || process.env.USERPROFILE;
   return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+}
+
+function formatProviderName(provider: string): string {
+  return provider === "openai-codex" ? "OpenAI" : provider;
+}
+
+function formatModelName(model: string): string {
+  return model === "gpt-5.6-sol" ? "5.6 Sol" : model;
 }
 
 // ── token speed tracking ──────────────────────────────────────────────
@@ -94,6 +155,9 @@ function resetSpeed() {
 export default function (pi: ExtensionAPI) {
   let _ctx: ExtensionContext | null = null;
   let gitViewUrl: string | null = getGlobalGitViewUrl();
+  let codexRateLimitWindows: CodexRateLimitWindow[] | null = null;
+  let codexRateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
+  let rateLimitRefresh: Promise<void> | null = null;
 
   const unsubscribeGitViewUrl = pi.events.on(GIT_VIEW_URL_EVENT, (data) => {
     const nextUrl = extractGitViewUrl(data);
@@ -102,16 +166,58 @@ export default function (pi: ExtensionAPI) {
     if (_ctx) installFooter(_ctx);
   });
 
+  const unsubscribeCodexRateLimits = pi.events.on(CODEX_RATE_LIMITS_EVENT, (data) => {
+    const windows = extractCodexRateLimitWindows(data);
+    if (windows === undefined) return;
+    codexRateLimitWindows = windows;
+    codexRateLimitStatus = "ready";
+    if (_ctx) installFooter(_ctx);
+  });
+
+  function usesChatGptSubscription(ctx: ExtensionContext): boolean {
+    return ctx.model?.provider === "openai-codex" &&
+      Boolean(ctx.modelRegistry?.isUsingOAuth?.(ctx.model));
+  }
+
+  function refreshCodexRateLimits(ctx: ExtensionContext): void {
+    if (!usesChatGptSubscription(ctx)) {
+      codexRateLimitStatus = "hidden";
+      codexRateLimitWindows = null;
+      return;
+    }
+    if (rateLimitRefresh) return;
+
+    if (codexRateLimitStatus !== "ready") codexRateLimitStatus = "loading";
+    const task = (async () => {
+      try {
+        const limits = await readCodexRateLimits();
+        pi.events.emit(CODEX_RATE_LIMITS_EVENT, limits);
+      } catch {
+        codexRateLimitStatus = "error";
+        codexRateLimitWindows = null;
+        if (_ctx) installFooter(_ctx);
+      }
+    })();
+    rateLimitRefresh = task;
+    void task.finally(() => {
+      if (rateLimitRefresh === task) rateLimitRefresh = null;
+    });
+  }
+
   // ── store context ──────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
     _ctx = ctx;
-    gitViewUrl = getGlobalGitViewUrl() ?? gitViewUrl;
+    gitViewUrl = getGlobalGitViewUrl();
     resetSpeed();
+    codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
+    codexRateLimitWindows = null;
     installFooter(ctx);
+    refreshCodexRateLimits(ctx);
   });
 
   pi.on("session_shutdown", async () => {
     unsubscribeGitViewUrl();
+    unsubscribeCodexRateLimits();
     _ctx = null;
   });
 
@@ -122,6 +228,13 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("thinking_level_select", async (_event, ctx) => {
     installFooter(ctx);
+  });
+
+  pi.on("model_select", async (_event, ctx) => {
+    codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
+    codexRateLimitWindows = null;
+    installFooter(ctx);
+    refreshCodexRateLimits(ctx);
   });
 
   pi.on("turn_end", async (_event, ctx) => {
@@ -145,6 +258,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     installFooter(ctx);
+    refreshCodexRateLimits(ctx);
   });
 
   // ── refresh after file-changing tools ──────────────────────────────
@@ -161,8 +275,6 @@ export default function (pi: ExtensionAPI) {
   // ── footer installation ────────────────────────────────────────────
 
   function installFooter(ctx: ExtensionContext) {
-    const stats = getDiffStats();
-
     ctx.ui.setFooter((tui, theme, footerData) => {
       const unsub = footerData.onBranchChange(() => tui.requestRender());
 
@@ -176,7 +288,7 @@ export default function (pi: ExtensionAPI) {
               ? `${Math.round(lastOutputTokensPerSec)} tok/s`
               : `${lastOutputTokensPerSec.toFixed(1)} tok/s`
             : "0 tok/s";
-          const speedRight = `${speedText}  `;
+          const speedRight = speedText;
           const speedW = visibleWidth(speedRight);
 
           const cwd = typeof ctx.sessionManager.getCwd === "function"
@@ -191,22 +303,19 @@ export default function (pi: ExtensionAPI) {
 
           const minGap = 2;
           const availableBeforeSpeed = Math.max(1, width - speedW - minGap);
-          const sessionText = sessionName ? truncateToWidth(sessionName, availableBeforeSpeed, "...") : "";
+          const sessionMaxWidth = Math.max(1, availableBeforeSpeed - minGap - 1);
+          const sessionText = sessionName
+            ? truncateToWidth(sessionName, sessionMaxWidth, "...")
+            : "";
           const sessionW = visibleWidth(sessionText);
           const pwdMaxWidth = sessionText
-            ? Math.max(1, Math.floor((availableBeforeSpeed - sessionW - minGap * 2) / 2))
+            ? Math.max(1, availableBeforeSpeed - sessionW - minGap)
             : availableBeforeSpeed;
           const pwdText = truncateToWidth(pwd, pwdMaxWidth, "...");
-          const pwdW = visibleWidth(pwdText);
 
-          let prefix: string;
-          if (sessionText) {
-            const targetSessionStart = Math.max(pwdW + minGap, Math.floor((width - sessionW) / 2));
-            const gapAfterPwd = Math.max(minGap, targetSessionStart - pwdW);
-            prefix = theme.fg("dim", pwdText) + " ".repeat(gapAfterPwd) + theme.fg("dim", sessionText);
-          } else {
-            prefix = theme.fg("dim", pwdText);
-          }
+          const prefix = sessionText
+            ? theme.fg("dim", pwdText) + " ".repeat(minGap) + theme.fg("dim", sessionText)
+            : theme.fg("dim", pwdText);
 
           const pwdPad = " ".repeat(Math.max(minGap, width - visibleWidth(prefix) - speedW));
           const pwdLine = prefix + pwdPad + theme.fg("dim", speedRight);
@@ -239,9 +348,7 @@ export default function (pi: ExtensionAPI) {
           if (cacheWrite) statsParts.push(`W${formatTokens(cacheWrite)}`);
 
           const usingSubscription = ctx.model ? ctx.modelRegistry?.isUsingOAuth?.(ctx.model) : false;
-          if (cost || usingSubscription) {
-            statsParts.push(`$${cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
-          }
+          statsParts.push(`$${formatCost(cost)}`);
 
           const contextPercent = ctx.getContextUsage?.()?.percent;
           if (contextPercent !== null && contextPercent !== undefined) {
@@ -252,28 +359,37 @@ export default function (pi: ExtensionAPI) {
 
           // ── line 2 right: provider, model, reasoning, speed ────────
           const providerCount = footerData.getAvailableProviderCount?.() ?? 1;
-          const modelName = ctx.model?.id || "no-model";
-          const providerPrefix = providerCount > 1 && ctx.model ? `(${ctx.model.provider}) ` : "";
+          const modelName = formatModelName(ctx.model?.id || "no-model");
+          const providerPrefix = providerCount > 1 && ctx.model
+            ? `(${formatProviderName(ctx.model.provider)}) `
+            : "";
           const reasoningLevel = pi.getThinkingLevel();
           const statuses = Array.from(footerData.getExtensionStatuses().entries())
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([, status]) => sanitizeStatusText(status))
             .filter((status) => status.length > 0);
           const statusText = statuses.length > 0 ? ` ${statuses.join(" ")}` : "";
-          const rightText = `${providerPrefix}${modelName} (${reasoningLevel})${statusText}`;
-          const right = theme.fg("dim", `${rightText}  `);
+          const rightText = `${providerPrefix}${modelName} @${reasoningLevel}${statusText}`;
+          const right = theme.fg("dim", rightText);
 
-          // ── git diff stats (centre, if available) ─────────────────
-          const diff = getDiffStats();
-          let centre = "";
+          // ── centred git diff and subscription usage ──────────────
+          const centreParts: string[] = [];
+          const diff = getDiffStats(cwd);
           if (diff) {
             const coloured = diff.replace(
               /^(\+\d+)\s+(−\d+)$/,
               (_, adds: string, dels: string) =>
                 theme.fg("success", adds) + " " + theme.fg("dim", " ") + theme.fg("error", dels),
             );
-            centre = gitViewUrl ? hyperlink(coloured, gitViewUrl) : coloured;
+            centreParts.push(gitViewUrl ? hyperlink(coloured, gitViewUrl) : coloured);
           }
+          const rateLimitsText = formatCodexRateLimits(codexRateLimitStatus, codexRateLimitWindows);
+          if (usingSubscription && rateLimitsText) {
+            centreParts.push(theme.fg("dim", rateLimitsText));
+          } else if (!usingSubscription) {
+            centreParts.push(theme.fg("dim", "API"));
+          }
+          const centre = centreParts.join("  ");
 
           // ── line 2 layout: stats | centred diff | right side ───────
           const leftW = visibleWidth(left);

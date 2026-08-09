@@ -61,8 +61,8 @@ function createFakePi() {
   };
 }
 
-function createFakeContext() {
-  return { ui: { notify() {} } };
+function createFakeContext(cwd = process.cwd()) {
+  return { cwd, sessionManager: { getCwd: () => cwd }, ui: { notify() {} } };
 }
 
 function wait(ms) {
@@ -192,6 +192,28 @@ test('Git View collector excludes the primary checkout from worktrees', async ()
     );
     assert.equal(data.worktrees[0]?.branch, 'refs/heads/side');
   } finally {
+    process.chdir(originalCwd);
+  }
+});
+
+test('Git View stays disabled when the session cwd is outside a repository', async () => {
+  const originalCwd = process.cwd();
+  const repo = await createRepo();
+  const nonRepo = await mkdtemp(join(tmpdir(), 'sz-git-view-non-repo-'));
+  process.chdir(repo);
+
+  const { default: installGitViewExtension } = await freshGitViewModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext(nonRepo);
+
+  try {
+    await installGitViewExtension(pi);
+    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+    const publications = pi.eventMessages.filter((message) => message.channel === 'sz-git-view:url');
+
+    assert.deepEqual(publications.map((message) => message.data.url), [null]);
+  } finally {
+    await pi.handlers.get('session_shutdown')?.({ reason: 'quit' }, ctx);
     process.chdir(originalCwd);
   }
 });

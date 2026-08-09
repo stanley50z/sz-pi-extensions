@@ -1,19 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { stripVTControlCharacters } from "node:util";
 import minimalToolOutputExtension from "../extensions/minimal-tool-output.ts";
 
 function install() {
   const tools = new Map();
   const handlers = new Map();
+  const markdownTransformers = [];
   minimalToolOutputExtension({
     registerTool(tool) {
       tools.set(tool.name, tool);
+    },
+    registerMarkdownTransformer(transformer) {
+      markdownTransformers.push(transformer);
     },
     on(event, handler) {
       handlers.set(event, handler);
     },
   });
-  return { tools, handlers };
+  handlers.get("session_start")(
+    {},
+    {
+      ui: { getToolsExpanded: () => false },
+      sessionManager: { getBranch: () => [] },
+    },
+  );
+  return { tools, handlers, markdownTransformers };
 }
 
 const theme = {
@@ -23,10 +35,22 @@ const theme = {
   bg(_color, text) {
     return text;
   },
+  bold(text) {
+    return `\u001b[1m${text}\u001b[22m`;
+  },
+  italic(text) {
+    return text;
+  },
+  underline(text) {
+    return text;
+  },
+  strikethrough(text) {
+    return text;
+  },
 };
 
 function renderText(component, width = 120) {
-  return component.render(width).map((line) => line.trim());
+  return component.render(width).map((line) => stripVTControlCharacters(line).trim());
 }
 
 test("collapsed edit shows only its call line", () => {
@@ -36,18 +60,191 @@ test("collapsed edit shows only its call line", () => {
   const call = edit.renderCall(
     { path: "extensions/file-search.ts" },
     theme,
-    { toolCallId: "edit-1", invalidate() {} },
+    { toolCallId: "edit-1", expanded: true, invalidate() {} },
   );
   assert.deepEqual(renderText(call), ["", "edit extensions/file-search.ts", ""]);
 
-  const result = edit.renderResult(
-    { content: [{ type: "text", text: "diff output" }], details: {} },
+  const toolResult = {
+    content: [
+      { type: "text", text: "diff output" },
+      { type: "image", data: "base64-image", mimeType: "image/png" },
+    ],
+    details: {},
+  };
+  const ultraCollapsedResult = edit.renderResult(
+    toolResult,
     { expanded: false, isPartial: false },
     theme,
     {},
   );
+  const collapsedResult = edit.renderResult(
+    toolResult,
+    { expanded: true, isPartial: false },
+    theme,
+    {},
+  );
 
-  assert.deepEqual(result.render(120), []);
+  assert.deepEqual(ultraCollapsedResult.render(120), []);
+  assert.deepEqual(collapsedResult.render(120), []);
+});
+
+test("ultra-collapsed view replaces mixed tool commands with one count", async () => {
+  const { tools, handlers } = install();
+
+  await handlers.get("message_end")({
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "Setting up temp file with Bash commands",
+        },
+        {
+          type: "toolCall",
+          id: "write-ultra",
+          name: "write",
+          arguments: { path: "C:/temp/pi-rate-limit-probe.ts", content: "test" },
+        },
+        {
+          type: "toolCall",
+          id: "bash-ultra",
+          name: "bash",
+          arguments: { command: "pi -p -e C:/temp/pi-rate-limit-probe.ts" },
+        },
+      ],
+    },
+  });
+
+  const writeCall = tools.get("write").renderCall(
+    { path: "C:/temp/pi-rate-limit-probe.ts", content: "test" },
+    theme,
+    { toolCallId: "write-ultra", expanded: false, invalidate() {} },
+  );
+  const bashCall = tools.get("bash").renderCall(
+    { command: "pi -p -e C:/temp/pi-rate-limit-probe.ts" },
+    theme,
+    { toolCallId: "bash-ultra", expanded: false, invalidate() {} },
+  );
+
+  assert.deepEqual(renderText(writeCall), ["Setting up temp file with Bash commands 2 tool calls"]);
+  assert.deepEqual(renderText(bashCall), []);
+});
+
+test("ultra-collapsed view keeps rendered Markdown and its tool count on one line", async () => {
+  const { tools, handlers, markdownTransformers } = install();
+  const content = [
+    { type: "thinking", thinking: "**Reviewing code consistency and diffs**" },
+    { type: "toolCall", id: "review-1", name: "read", arguments: { path: "a.ts" } },
+    { type: "toolCall", id: "review-2", name: "read", arguments: { path: "b.ts" } },
+    { type: "toolCall", id: "review-3", name: "bash", arguments: { command: "git diff" } },
+  ];
+
+  await handlers.get("message_end")({ message: { role: "assistant", content } });
+
+  const transformed = markdownTransformers[0](content[0].thinking, {
+    messageType: "assistant-thinking",
+    isStreaming: false,
+    availableWidth: 120,
+  });
+  const firstCall = tools.get("read").renderCall(
+    { path: "a.ts" },
+    theme,
+    { toolCallId: "review-1", expanded: false, invalidate() {} },
+  );
+
+  assert.equal(transformed, "");
+  assert.deepEqual(renderText(firstCall), ["Reviewing code consistency and diffs 3 tool calls"]);
+  assert.doesNotMatch(firstCall.render(120).join("\n"), /\*\*/);
+});
+
+test("collapsed view keeps the narration above the tool card", async () => {
+  const { tools, handlers, markdownTransformers } = install();
+  const content = [
+    { type: "text", text: "Reviewing code consistency and diffs" },
+    { type: "toolCall", id: "review-expanded", name: "read", arguments: { path: "a.ts" } },
+  ];
+
+  await handlers.get("message_end")({ message: { role: "assistant", content } });
+
+  assert.equal(
+    markdownTransformers[0](content[0].text, {
+      messageType: "assistant",
+      isStreaming: false,
+      availableWidth: 120,
+    }),
+    "",
+  );
+  const call = tools.get("read").renderCall(
+    { path: "a.ts" },
+    theme,
+    { toolCallId: "review-expanded", expanded: true, invalidate() {} },
+  );
+  assert.deepEqual(renderText(call), [
+    "Reviewing code consistency and diffs",
+    "",
+    "read a.ts",
+    "",
+  ]);
+});
+
+test("ultra-collapsed view combines consecutive tool-only turns into the active narration", async () => {
+  const { tools, handlers, markdownTransformers } = install();
+  const turns = [
+    [
+      { type: "text", text: "Planning failing test for tool call count bug" },
+      { type: "toolCall", id: "plan-1", name: "edit", arguments: { path: "test.ts" } },
+    ],
+    [{ type: "toolCall", id: "plan-2", name: "bash", arguments: { command: "test 1" } }],
+    [{ type: "toolCall", id: "plan-3", name: "edit", arguments: { path: "source.ts" } }],
+    [{ type: "toolCall", id: "plan-4", name: "bash", arguments: { command: "test 2" } }],
+  ];
+
+  for (const content of turns) {
+    await handlers.get("message_end")({ message: { role: "assistant", content } });
+  }
+
+  const transformed = markdownTransformers[0](turns[0][0].text, {
+    messageType: "assistant",
+    isStreaming: false,
+    availableWidth: 120,
+  });
+  const calls = [
+    tools.get("edit").renderCall(
+      { path: "test.ts" },
+      theme,
+      { toolCallId: "plan-1", expanded: false, invalidate() {} },
+    ),
+    tools.get("bash").renderCall(
+      { command: "test 1" },
+      theme,
+      { toolCallId: "plan-2", expanded: false, invalidate() {} },
+    ),
+    tools.get("edit").renderCall(
+      { path: "source.ts" },
+      theme,
+      { toolCallId: "plan-3", expanded: false, invalidate() {} },
+    ),
+    tools.get("bash").renderCall(
+      { command: "test 2" },
+      theme,
+      { toolCallId: "plan-4", expanded: false, invalidate() {} },
+    ),
+  ];
+
+  assert.equal(transformed, "");
+  assert.deepEqual(renderText(calls[0]), ["Planning failing test for tool call count bug 4 tool calls"]);
+  assert.deepEqual(calls.slice(1).map((call) => renderText(call)), [[], [], []]);
+});
+
+test("ultra-collapsed view summarizes a streaming call before its group is indexed", () => {
+  const bash = install().tools.get("bash");
+  const call = bash.renderCall(
+    { command: "echo hidden" },
+    theme,
+    { toolCallId: "bash-streaming", expanded: false, invalidate() {} },
+  );
+
+  assert.deepEqual(renderText(call), ["1 tool call"]);
 });
 
 test("completed tool call lines retain the success background", () => {
@@ -63,7 +260,13 @@ test("completed tool call lines retain the success background", () => {
   const call = edit.renderCall(
     { path: "extensions/file-search.ts" },
     highlightedTheme,
-    { toolCallId: "edit-highlighted", isPartial: false, isError: false, invalidate() {} },
+    {
+      toolCallId: "edit-highlighted",
+      expanded: true,
+      isPartial: false,
+      isError: false,
+      invalidate() {},
+    },
   );
 
   call.render(80);
@@ -79,7 +282,7 @@ test("multiline bash calls show only the first command line", () => {
       command: "cd C:/Users/13982/sz-pi-extensions && node --input-type=module <<'EOF'\nimport minimal from './extensions/minimal-tool-output.ts';\nEOF",
     },
     theme,
-    { toolCallId: "bash-1", invalidate() {} },
+    { toolCallId: "bash-1", expanded: true, invalidate() {} },
   );
 
   assert.deepEqual(renderText(call, 200), [
@@ -115,21 +318,14 @@ test("consecutive reads collapse into one file summary", async () => {
   const first = read.renderCall(
     { path: reads[0][1] },
     theme,
-    { toolCallId: reads[0][0], invalidate() {} },
+    { toolCallId: reads[0][0], expanded: true, invalidate() {} },
   );
   const second = read.renderCall(
     { path: reads[1][1] },
     theme,
-    { toolCallId: reads[1][0], invalidate() {} },
-  );
-  const expandedSecond = read.renderCall(
-    { path: reads[1][1] },
-    theme,
     { toolCallId: reads[1][0], expanded: true, invalidate() {} },
   );
-
   assert.equal(read.renderShell, "self");
   assert.deepEqual(renderText(first), ["", "read test/file-search.test.mjs and 4 files", ""]);
   assert.deepEqual(renderText(second), []);
-  assert.deepEqual(renderText(expandedSecond), ["", "read test/openai-fast-mode.test.mjs", ""]);
 });

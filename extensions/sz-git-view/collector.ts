@@ -1,5 +1,6 @@
 // extensions/sz-git-view/collector.ts
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { basename } from "node:path";
 import { parseGitLog, parseGitStatus, parseGitWorktree } from "./git-parsers.ts";
 import type { CommitNode, StatusEntry, WorktreeEntry } from "./git-parsers.ts";
 
@@ -14,14 +15,26 @@ export interface GitData {
 const GIT_TIMEOUT = 3000;
 const COMMIT_COUNT = 30;
 
-export function collectAll(): GitData {
+function runGit(args: string[], cwd: string, timeout = GIT_TIMEOUT): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+export function resolveGitRoot(cwd: string): string | null {
   try {
-    execSync("git rev-parse --git-dir", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: GIT_TIMEOUT,
-    });
+    return runGit(["rev-parse", "--show-toplevel"], cwd).trim() || null;
   } catch {
+    return null;
+  }
+}
+
+export function collectAll(cwd = process.cwd()): GitData {
+  const repoRoot = resolveGitRoot(cwd);
+  if (!repoRoot) {
     return {
       repoName: "",
       commits: [],
@@ -31,59 +44,41 @@ export function collectAll(): GitData {
     };
   }
 
-  const repoName = getRepoName();
-  const commits = collectCommits();
-  const status = collectStatus();
-  const worktrees = collectWorktrees();
+  const repoName = getRepoName(repoRoot);
+  const commits = collectCommits(repoRoot);
+  const status = collectStatus(repoRoot);
+  const worktrees = collectWorktrees(repoRoot);
 
   return { repoName, commits, status, worktrees };
 }
 
-export function getDiffForPath(filePath: string): string | null {
+export function getDiffForPath(filePath: string, cwd = process.cwd()): string | null {
   try {
-    return execSync(`git diff -- "${filePath}"`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 5000,
-      maxBuffer: 1024 * 1024, // 1MB
-    });
+    return runGit(["diff", "--", filePath], cwd, 5000);
   } catch {
     return null;
   }
 }
 
-function getRepoName(): string {
+function getRepoName(repoRoot: string): string {
   try {
-    const remote = execSync("git remote get-url origin", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: GIT_TIMEOUT,
-    }).trim();
-    const match = remote.match(/\/([^/]+?)(?:\.git)?$/);
+    const remote = runGit(["remote", "get-url", "origin"], repoRoot).trim();
+    const match = remote.match(/[\\/]([^\\/]+?)(?:\.git)?$/);
     if (match) return match[1];
   } catch { /* no remote */ }
-  try {
-    const gitDir = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: GIT_TIMEOUT,
-    }).trim();
-    return gitDir.split("/").pop() || "unknown";
-  } catch {
-    return "unknown";
-  }
+  return basename(repoRoot) || "unknown";
 }
 
-function collectCommits(): CommitNode[] {
+function collectCommits(repoRoot: string): CommitNode[] {
   try {
-    const out = execSync(
-      `git log --all --topo-order --parents --format="%H%x1f%h%x1f%an%x1f%aI%x1f%ar%x1f%D%x1f%P%x1f%s%x1f%b%x1e" -${COMMIT_COUNT}`,
-      {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: GIT_TIMEOUT,
-      }
-    ).trim();
+    const out = runGit([
+      "log",
+      "--all",
+      "--topo-order",
+      "--parents",
+      "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%ar%x1f%D%x1f%P%x1f%s%x1f%b%x1e",
+      `-${COMMIT_COUNT}`,
+    ], repoRoot).trim();
     if (!out) return [];
 
     const commits = parseGitLog(out);
@@ -94,26 +89,18 @@ function collectCommits(): CommitNode[] {
   }
 }
 
-function collectStatus(): StatusEntry[] {
+function collectStatus(repoRoot: string): StatusEntry[] {
   try {
-    const out = execSync("git status --porcelain -uall", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: GIT_TIMEOUT,
-    });
+    const out = runGit(["status", "--porcelain", "-uall"], repoRoot);
     return out.trim() ? parseGitStatus(out) : [];
   } catch {
     return [];
   }
 }
 
-function collectWorktrees(): WorktreeEntry[] {
+function collectWorktrees(repoRoot: string): WorktreeEntry[] {
   try {
-    const out = execSync("git worktree list --porcelain", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: GIT_TIMEOUT,
-    }).trim();
+    const out = runGit(["worktree", "list", "--porcelain"], repoRoot).trim();
     // git worktree list includes the primary checkout first. The panel should
     // only show linked side worktrees, not the main repository checkout.
     return out ? parseGitWorktree(out).slice(1) : [];
