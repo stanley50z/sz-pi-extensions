@@ -9,10 +9,15 @@ async function freshReasoningCommandModule() {
 
 function createFakePi() {
   const commands = new Map();
+  const handlers = new Map();
   const selectedLevels = [];
   return {
     commands,
+    handlers,
     selectedLevels,
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
     registerCommand(name, options) {
       commands.set(name, options);
     },
@@ -22,10 +27,11 @@ function createFakePi() {
   };
 }
 
-function createFakeContext(selectResult = undefined) {
+function createFakeContext(selectResult = undefined, model = undefined) {
   const notifications = [];
   const selectCalls = [];
   return {
+    model,
     notifications,
     selectCalls,
     ui: {
@@ -61,6 +67,7 @@ test('/r shorthand arguments set the requested thinking level', async () => {
     ['m', 'medium'],
     ['h', 'high'],
     ['xh', 'xhigh'],
+    ['max', 'max'],
   ];
 
   for (const [arg, expected] of cases) {
@@ -75,7 +82,7 @@ test('/r shorthand arguments set the requested thinking level', async () => {
 });
 
 test('/r full level names set the requested thinking level', async () => {
-  for (const level of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+  for (const level of ['off', 'low', 'medium', 'high', 'xhigh', 'max']) {
     const pi = await install();
     const ctx = createFakeContext();
 
@@ -93,21 +100,69 @@ test('/r without an argument opens a picker and applies the selected thinking le
 
   assert.deepEqual(ctx.selectCalls, [{
     title: 'Reasoning level',
-    options: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+    options: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
   }]);
   assert.deepEqual(pi.selectedLevels, ['medium']);
   assert.deepEqual(ctx.notifications, [{ message: 'Reasoning: medium', type: 'info' }]);
 });
 
-test('/r invalid arguments notify an error without changing thinking level', async () => {
+test('/r invalid and minimal arguments notify an error without changing thinking level', async () => {
+  for (const argument of ['min', 'minimal']) {
+    const pi = await install();
+    const ctx = createFakeContext();
+
+    await pi.commands.get('r').handler(argument, ctx);
+
+    assert.deepEqual(pi.selectedLevels, []);
+    assert.deepEqual(ctx.notifications, [{
+      message: `Unknown reasoning level: ${argument}`,
+      type: 'error',
+    }]);
+  }
+});
+
+test('/r picker only exposes levels supported by the active model', async () => {
   const pi = await install();
-  const ctx = createFakeContext();
+  const deepSeek = {
+    provider: 'deepseek',
+    id: 'deepseek-v4-pro',
+    reasoning: true,
+    thinkingLevelMap: {
+      minimal: null,
+      low: null,
+      medium: null,
+      high: 'high',
+      max: 'max',
+    },
+  };
+  const ctx = createFakeContext('high', deepSeek);
 
-  await pi.commands.get('r').handler('min', ctx);
+  await pi.commands.get('r').handler('', ctx);
 
-  assert.deepEqual(pi.selectedLevels, []);
-  assert.deepEqual(ctx.notifications, [{
-    message: 'Unknown reasoning level: min',
-    type: 'error',
+  assert.deepEqual(ctx.selectCalls, [{
+    title: 'Reasoning level',
+    options: ['off', 'high', 'max'],
   }]);
+  assert.deepEqual(pi.selectedLevels, ['high']);
+});
+
+test('/r completions follow the model selected for the current session', async () => {
+  const pi = await install();
+  const deepSeek = {
+    provider: 'deepseek',
+    id: 'deepseek-v4-pro',
+    reasoning: true,
+    thinkingLevelMap: {
+      minimal: null,
+      low: null,
+      medium: null,
+      high: 'high',
+      max: 'max',
+    },
+  };
+
+  await pi.handlers.get('session_start')({}, { model: deepSeek });
+  const completions = await pi.commands.get('r').getArgumentCompletions('');
+
+  assert.deepEqual(completions.map(({ value }) => value), ['o', 'h', 'off', 'high', 'max']);
 });

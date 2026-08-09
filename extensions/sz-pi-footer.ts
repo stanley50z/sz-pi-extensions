@@ -137,7 +137,9 @@ function formatProviderName(provider: string): string {
 }
 
 function formatModelName(model: string): string {
-  return model === "gpt-5.6-sol" ? "5.6 Sol" : model;
+  if (model === "gpt-5.6-sol") return "5.6 Sol";
+  if (model === "gpt-5.6-luna") return "5.6 Luna";
+  return model;
 }
 
 // ── token speed tracking ──────────────────────────────────────────────

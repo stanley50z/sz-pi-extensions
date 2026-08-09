@@ -91,7 +91,7 @@ async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameD
   if (!ctx.model) return null;
 
   const rounds = collectAnsweredRounds(ctx);
-  if (rounds.length < 2) return null;
+  if (rounds.length < 1) return null;
 
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
   if (!auth.ok || !auth.apiKey) return null;

@@ -85,7 +85,7 @@ function createFakeContext(branch, overrides = {}) {
   };
 }
 
-test('does not generate a name before the second user prompt has an answer', async () => {
+test('generates a session name after the first user prompt receives an answer', async () => {
   const { createSessionAutoNameExtension } = await freshModule();
   const calls = [];
   const pi = createFakePi();
@@ -103,19 +103,17 @@ test('does not generate a name before the second user prompt has an answer', asy
 
   await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
 
-  assert.equal(calls.length, 0);
-  assert.deepEqual(pi.setNames, []);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(pi.setNames, ['Repository Inspection']);
 });
 
-test('generates and persists a sanitized session name after the second answered prompt', async () => {
+test('persists a sanitized session name without adding a conversation turn', async () => {
   const { createSessionAutoNameExtension } = await freshModule();
   const calls = [];
   const pi = createFakePi();
   const ctx = createFakeContext([
     messageEntry('user', 'Please inspect this repository.'),
     messageEntry('assistant', 'I inspected the repository.', { stopReason: 'stop' }),
-    messageEntry('user', 'Add automatic session naming after round two.'),
-    messageEntry('assistant', 'I will implement a session auto-name extension.', { stopReason: 'stop' }),
   ]);
 
   createSessionAutoNameExtension({
@@ -130,7 +128,8 @@ test('generates and persists a sanitized session name after the second answered 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], ctx.model);
   assert.match(calls[0][1].systemPrompt, /concise session titles/i);
-  assert.match(calls[0][1].messages[0].content[0].text, /User prompt 2:/);
+  assert.match(calls[0][1].messages[0].content[0].text, /User prompt 1:/);
+  assert.doesNotMatch(calls[0][1].messages[0].content[0].text, /User prompt 2:/);
   assert.deepEqual(calls[0][2], { apiKey: 'test-key', headers: { 'x-test': '1' }, signal: undefined });
   assert.deepEqual(pi.setNames, ['Automatic Session Naming']);
   assert.equal(pi.sentUserMessages.length, 0);
@@ -144,8 +143,6 @@ test('registers /autoname to generate a name for the current session on demand',
   const ctx = createFakeContext([
     messageEntry('user', 'Please inspect this repository.'),
     messageEntry('assistant', 'I inspected the repository.', { stopReason: 'stop' }),
-    messageEntry('user', 'Add automatic session naming after round two.'),
-    messageEntry('assistant', 'I will implement a session auto-name extension.', { stopReason: 'stop' }),
   ]);
 
   createSessionAutoNameExtension({
@@ -170,8 +167,6 @@ test('skips automatic naming when the session already has an explicit name', asy
   const ctx = createFakeContext([
     messageEntry('user', 'First prompt'),
     messageEntry('assistant', 'First answer', { stopReason: 'stop' }),
-    messageEntry('user', 'Second prompt'),
-    messageEntry('assistant', 'Second answer', { stopReason: 'stop' }),
   ]);
 
   createSessionAutoNameExtension({

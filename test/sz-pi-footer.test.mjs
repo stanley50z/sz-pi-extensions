@@ -220,6 +220,43 @@ test('footer uses compact OpenAI model, reasoning, and fast-mode labels', async 
   }
 });
 
+test('footer uses the compact OpenAI Luna model label', async () => {
+  const originalCwd = process.cwd();
+  const dir = await mkdtemp(join(tmpdir(), 'sz-pi-footer-no-git-'));
+  process.chdir(dir);
+
+  try {
+    const { default: installFooterExtension } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext({
+      usingSubscription: false,
+      model: {
+        provider: 'openai-codex',
+        id: 'gpt-5.6-luna',
+        reasoning: true,
+        contextWindow: 272000,
+      },
+    });
+
+    installFooterExtension(pi);
+    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+
+    const footer = ctx.footerFactory(
+      { requestRender() {} },
+      plainTheme,
+      createFooterData(null, new Map([['openai-fast-mode', '⚡fast']]), 2),
+    );
+    const lines = footer.render(120);
+
+    assert.match(lines[1], /\(OpenAI\) 5\.6 Luna @high ⚡fast/);
+    assert.doesNotMatch(lines[1], /openai-codex|gpt-5\.6-luna|\(high\)|⚡ fast/);
+    assert.equal(visibleWidth(lines[1]), 120);
+    assert.match(stripVTControlCharacters(lines[1]), /⚡fast$/);
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
+
 test('footer shows API billing with a three-significant-figure cost', async () => {
   const originalCwd = process.cwd();
   const dir = await mkdtemp(join(tmpdir(), 'sz-pi-footer-no-git-'));

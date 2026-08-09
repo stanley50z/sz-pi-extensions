@@ -18,6 +18,8 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
+- **Remembered launch modes** that keep Lark and Remotion skills out of context until enabled
+- **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5 to `high`
 - **Git view** and other local workflow helpers
 
 ## Install
@@ -59,6 +61,20 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 Built-in file and shell tools, local search tools, and subagent tools never render result bodies or image previews. Press Ctrl+O to switch between the collapsed view (grouped one-line call cards) and the ultra-collapsed view, where every supported tool—across separately loaded extensions—contributes to the `+ N tool calls` summary attached to its one-line narration and consecutive tool-only turns are combined.
 
 Git View and the footer's clickable change count activate only when the current session working directory belongs to a Git repository.
+
+## Launch modes
+
+On first interactive startup, select **Core**, **Lark**, **Remotion**, or **Lark + Remotion**. The choice is stored in `~/.pi/agent/launch-modes.json` and reused by later sessions. Run `/launch-mode` to select again, or use `/launch-mode core`, `/launch-mode lark`, `/launch-mode remotion`, or `/launch-mode all` directly.
+
+The extension filters disabled suites out of the model system prompt. To also hide them from Pi's startup resource list and slash-command discovery, add these exclusions to `~/.pi/agent/settings.json`:
+
+```json
+{
+  "skills": ["!lark-*", "!remotion-*"]
+}
+```
+
+Selected suites are re-added dynamically. `launch-modes.json` is editable; each mode has a label, description, and `skillPaths` list. Wildcards are supported in the final path segment.
 
 ## Fast mode
 

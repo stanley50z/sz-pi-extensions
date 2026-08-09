@@ -33,7 +33,7 @@
 - Format calculated cost to three significant figures for both subscription and API-key sessions; subscription usage in the center already identifies subscription authentication, so omit `(sub)` from the cost.
 - Display context as `ctx:<percent>%`, rounded to an integer: serves compact context visibility without exposing the model's maximum context window or auto-compaction label.
 - Display provider prefix only when multiple providers are available; map `openai-codex` to `OpenAI`: serves model clarity without wasting width or exposing an implementation-facing provider ID.
-- Map `gpt-5.6-sol` to `5.6 Sol` in the footer while preserving unknown model IDs verbatim.
+- Map `gpt-5.6-sol` to `5.6 Sol` and `gpt-5.6-luna` to `5.6 Luna` in the footer while preserving unknown model IDs verbatim.
 - Display reasoning as `@<level>` beside the model: serves compact visibility into the current reasoning mode.
 - Render fast mode as `⚡fast` without an internal gap.
 - Sanitize extension status text to one line: serves footer stability by preventing status newlines, tabs, or excess spaces from breaking layout.

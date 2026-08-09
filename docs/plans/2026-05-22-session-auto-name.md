@@ -4,7 +4,7 @@
 
 > **Priority rule:** Tasks tagged `[USER-REQ]` implement non-negotiable user requirements. Tasks tagged `[AGENT-DECISION]` implement flexible agent design decisions. If a conflict arises during implementation, agent decisions yield to user requirements. If a user requirement cannot be met, stop and surface to the user.
 
-**Goal:** Add a pi extension that automatically generates and persists a concise session name after the second user prompt receives an assistant answer.
+**Goal:** Add a pi extension that automatically generates and persists a concise session name after the first user prompt receives an assistant answer.
 
 **Architecture:** Implement a focused extension in `extensions/session-auto-name.ts` that listens to `agent_end`, inspects the current branch, and performs a direct `complete()` call with the active model. The extension writes only session metadata via `pi.setSessionName()` and does not inject user or assistant messages into conversation history.
 
@@ -14,15 +14,15 @@
 
 ### Task 1: Add auto naming behavior [USER-REQ]
 
-**Requirement:** Automatically name the session after the second user prompt has received an answer, using AI, without adding a visible conversation turn.
+**Requirement:** Automatically name the session after the first user prompt has received an answer, using AI, without adding a visible conversation turn.
 
 **Files:**
 - Create: `extensions/session-auto-name.ts`
 - Test: `test/session-auto-name.test.mjs`
 
 - [ ] **Step 1: Write failing tests**
-  - Verify no name is generated after only one user prompt.
-  - Verify a direct model call runs after two user prompts and `pi.setSessionName()` is called with sanitized output.
+  - Verify no name is generated before the first user prompt has an assistant answer.
+  - Verify a direct model call runs after the first answered prompt and `pi.setSessionName()` is called with sanitized output.
   - Verify the extension does not call `pi.sendUserMessage()` or `pi.sendMessage()`.
 
 - [ ] **Step 2: Run focused tests to verify RED**
@@ -34,7 +34,7 @@ Expected: FAIL because the files/extension do not exist yet.
   - Export a dependency-injected `createSessionAutoNameExtension()` for tests.
   - Default export wires real `complete()`.
   - On `agent_end`, inspect `ctx.sessionManager.getBranch()`.
-  - If no existing `pi.getSessionName()` and at least two user messages plus one assistant answer exist, call `complete(ctx.model, ...)` with a short title prompt.
+  - If no existing `pi.getSessionName()` and at least one answered user prompt exists, call `complete(ctx.model, ...)` with a short title prompt.
   - Use `ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)` for auth.
   - Sanitize the response and call `pi.setSessionName(title)`.
 
