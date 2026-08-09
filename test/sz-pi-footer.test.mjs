@@ -168,7 +168,8 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
     assert.match(lines[1], /R300/);
     assert.match(lines[1], /W40/);
     assert.match(lines[1], /\$0\.123 \(sub\)/);
-    assert.match(lines[1], /42\.0%\/200k \(auto\)/);
+    assert.match(lines[1], /ctx:42%/);
+    assert.doesNotMatch(lines[1], /200k|\(auto\)|42\.0%/);
     assert.match(lines[1], /\+0\s+−0/);
     assert.match(lines[1], /\(openai\) test-model \(high\) ⚡ fast/);
     assert.doesNotMatch(lines[1], /tok\/s/);

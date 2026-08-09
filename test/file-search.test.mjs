@@ -73,6 +73,43 @@ test("find_files lists entries when glob mode has no explicit pattern", async (t
   assert.match(result.content[0].text, /notes\.md/);
 });
 
+test("file search tools hide multiline results while collapsed", () => {
+  const theme = {
+    fg(_color, text) {
+      return text;
+    },
+  };
+  const tools = setup();
+  const findFiles = tools.get("find_files");
+  const searchText = tools.get("search_text");
+
+  const findCall = findFiles.renderCall(
+    { pattern: "*.ts", path: "src" },
+    theme,
+    { toolCallId: "find-render", invalidate() {} },
+  );
+  const searchCall = searchText.renderCall(
+    { pattern: "needle", path: "src" },
+    theme,
+    { toolCallId: "search-render", invalidate() {} },
+  );
+  const multilineResult = {
+    content: [{ type: "text", text: "src/a.ts\nsrc/b.ts\nsrc/c.ts" }],
+    details: {},
+  };
+
+  assert.deepEqual(findCall.render(120), ["find_files *.ts in src"]);
+  assert.deepEqual(searchCall.render(120), ['search_text "needle" in src']);
+  assert.deepEqual(
+    findFiles.renderResult(multilineResult, { expanded: false }, theme, {}).render(120),
+    [],
+  );
+  assert.deepEqual(
+    searchText.renderResult(multilineResult, { expanded: false }, theme, {}).render(120),
+    [],
+  );
+});
+
 test("search_text finds matching content with the real rg binary", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "sz-search-text-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));

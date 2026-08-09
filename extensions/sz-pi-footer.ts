@@ -243,16 +243,10 @@ export default function (pi: ExtensionAPI) {
             statsParts.push(`$${cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
           }
 
-          const contextUsage = ctx.getContextUsage?.();
-          const contextWindow = contextUsage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-          const contextPercentValue = contextUsage?.percent ?? 0;
-          const contextPercent = contextUsage?.percent !== null && contextUsage?.percent !== undefined
-            ? contextPercentValue.toFixed(1)
-            : "?";
-          const contextDisplay = contextPercent === "?"
-            ? `?/${formatTokens(contextWindow)} (auto)`
-            : `${contextPercent}%/${formatTokens(contextWindow)} (auto)`;
-          if (contextWindow) statsParts.push(contextDisplay);
+          const contextPercent = ctx.getContextUsage?.()?.percent;
+          if (contextPercent !== null && contextPercent !== undefined) {
+            statsParts.push(`ctx:${Math.round(contextPercent)}%`);
+          }
 
           let left = theme.fg("dim", statsParts.join(" "));
 

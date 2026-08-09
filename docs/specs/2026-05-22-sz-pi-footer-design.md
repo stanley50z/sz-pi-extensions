@@ -27,7 +27,7 @@
 - Add two trailing spaces to right-aligned speed and model/status text: serves the right-side padding requirement and keeps the content away from the terminal edge.
 - Compute totals from `getEntries()` when available, otherwise `getBranch()`: serves default-like cumulative usage totals across the session while preserving compatibility.
 - Include input, output, cache read, cache write, cost, subscription indicator, and context usage in compact token units: serves default-style footer parity.
-- Display context as `<percent>%/<window> (auto)` or `?/<window> (auto)`: serves context visibility while indicating auto-compaction mode.
+- Display context as `ctx:<percent>%`, rounded to an integer: serves compact context visibility without exposing the model's maximum context window or auto-compaction label.
 - Display provider prefix only when multiple providers are available: serves model clarity without wasting width in single-provider setups.
 - Display reasoning level as `(<level>)` beside the model: serves visibility into current thinking/reasoning mode.
 - Sanitize extension status text to one line: serves footer stability by preventing status newlines, tabs, or excess spaces from breaking layout.
@@ -69,7 +69,7 @@ Responsibilities:
 3. `turn_end` finds the latest assistant message output token count, computes output tokens per second, and stores it if positive.
 4. Git View emits `sz-git-view:url`; the footer stores the URL and reinstalls itself so future renders hyperlink diff stats.
 5. Footer `render(width)` builds line 1 from left-aligned cwd/branch, centered session name, and right-aligned last speed or `0 tok/s`.
-6. Footer `render(width)` builds line 2 from cumulative usage, git diff stats, model/provider/reasoning, and extension statuses.
+6. Footer `render(width)` builds line 2 from cumulative usage, integer `ctx:<percent>%`, git diff stats, model/provider/reasoning, and extension statuses.
 7. Width calculations use `visibleWidth()` and `truncateToWidth()` so wide Unicode and ANSI styling do not exceed terminal width.
 
 ## Error Handling

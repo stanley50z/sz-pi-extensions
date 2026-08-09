@@ -1,23 +1,7 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-  registerApiProvider,
-  streamOpenAICodexResponses,
-  streamOpenAIResponses,
-  streamSimpleOpenAICodexResponses,
-  streamSimpleOpenAIResponses,
-  type Api,
-  type Context,
-  type Model,
-  type SimpleStreamOptions,
-  type StreamFunction,
-  type StreamOptions,
-} from "@earendil-works/pi-ai";
-
-type SupportedApi = "openai-responses" | "openai-codex-responses";
-type StreamDelegate<TApi extends SupportedApi, TOptions extends StreamOptions> = StreamFunction<TApi, TOptions>;
 
 const STATUS_KEY = "openai-fast-mode";
-const SOURCE_ID = "sz-openai-fast-mode";
 const SUPPORTED_APIS = new Set<Api>(["openai-responses", "openai-codex-responses"]);
 
 let enabled = false;
@@ -39,44 +23,6 @@ function notifyState(ctx: ExtensionContext): void {
   ctx.ui.notify(`Fast mode: ${enabled ? "on" : "off"}`, "info");
 }
 
-export function withPriorityServiceTier<TApi extends SupportedApi, TOptions extends StreamOptions>(
-  delegate: StreamDelegate<TApi, TOptions>,
-  isEnabled: () => boolean,
-): StreamDelegate<TApi, TOptions> {
-  return (model: Model<TApi>, context: Context, options?: TOptions) => {
-    const nextOptions = isEnabled()
-      ? ({ ...(options ?? {}), serviceTier: "priority" } as TOptions)
-      : options;
-    return delegate(model, context, nextOptions);
-  };
-}
-
-function registerWrappedProviders(): void {
-  registerApiProvider(
-    {
-      api: "openai-responses",
-      stream: withPriorityServiceTier(streamOpenAIResponses, () => enabled),
-      streamSimple: withPriorityServiceTier(
-        streamSimpleOpenAIResponses as StreamDelegate<"openai-responses", SimpleStreamOptions>,
-        () => enabled,
-      ),
-    },
-    SOURCE_ID,
-  );
-
-  registerApiProvider(
-    {
-      api: "openai-codex-responses",
-      stream: withPriorityServiceTier(streamOpenAICodexResponses, () => enabled),
-      streamSimple: withPriorityServiceTier(
-        streamSimpleOpenAICodexResponses as StreamDelegate<"openai-codex-responses", SimpleStreamOptions>,
-        () => enabled,
-      ),
-    },
-    SOURCE_ID,
-  );
-}
-
 export default function (pi: ExtensionAPI) {
   pi.registerFlag("fast", {
     description: "Start with OpenAI fast mode enabled",
@@ -85,7 +31,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   enabled = pi.getFlag("fast") === true;
-  registerWrappedProviders();
+
+  pi.on("before_provider_request", (event, ctx) => {
+    if (!enabled || !isSupportedModel(ctx.model)) return;
+    return { ...(event.payload as Record<string, unknown>), service_tier: "priority" };
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     updateStatus(ctx);

@@ -101,24 +101,13 @@ test('invalid /fast arguments notify an error', async () => {
   assert.deepEqual(ctx.notifications.at(-1), { message: 'Usage: /fast [on|off|status]', type: 'error' });
 });
 
-test('provider wrapper injects priority service tier only when enabled', async () => {
-  const { withPriorityServiceTier } = await freshFastModeModule();
-  const calls = [];
-  let enabled = false;
-  const delegate = (model, context, options) => {
-    calls.push({ model, context, options });
-    return { [Symbol.asyncIterator]: async function* () {} };
-  };
-  const wrapped = withPriorityServiceTier(delegate, () => enabled);
+test('fast mode adds priority service tier to the final provider payload', async () => {
+  const pi = await install();
+  const ctx = createFakeContext();
+  const payload = { model: 'gpt-5.6-sol', input: [] };
 
-  wrapped({ api: 'openai-responses' }, {}, { existing: true });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].options.serviceTier, undefined);
+  await pi.commands.get('fast').handler('on', ctx);
+  const result = await pi.handlers.get('before_provider_request')({ payload }, ctx);
 
-  enabled = true;
-  wrapped({ api: 'openai-responses' }, {}, { existing: true });
-
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].options.existing, true);
-  assert.equal(calls[1].options.serviceTier, 'priority');
+  assert.deepEqual(result, { ...payload, service_tier: 'priority' });
 });

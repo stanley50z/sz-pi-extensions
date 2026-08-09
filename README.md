@@ -54,7 +54,7 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 `ask_user` presents two to five choices and always includes a free-form answer. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
 
-`find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
+`find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file. Their collapsed tool rows stay on one line and reveal result bodies only when expanded.
 
 Built-in file and shell tools keep their normal call lines but hide result bodies while collapsed; expand a tool row to inspect its output.
 
