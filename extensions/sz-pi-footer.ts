@@ -312,10 +312,20 @@ export default function (pi: ExtensionAPI) {
             ? Math.max(1, availableBeforeSpeed - sessionW - minGap)
             : availableBeforeSpeed;
           const pwdText = truncateToWidth(pwd, pwdMaxWidth, "...");
+          const pwdW = visibleWidth(pwdText);
 
-          const prefix = sessionText
-            ? theme.fg("dim", pwdText) + " ".repeat(minGap) + theme.fg("dim", sessionText)
-            : theme.fg("dim", pwdText);
+          let prefix: string;
+          if (sessionText) {
+            const centeredStart = Math.floor((width - sessionW) / 2);
+            const minimumStart = pwdW + minGap;
+            const maximumStart = availableBeforeSpeed - sessionW;
+            const sessionStart = Math.min(Math.max(centeredStart, minimumStart), maximumStart);
+            prefix = theme.fg("dim", pwdText) +
+              " ".repeat(Math.max(minGap, sessionStart - pwdW)) +
+              theme.fg("dim", sessionText);
+          } else {
+            prefix = theme.fg("dim", pwdText);
+          }
 
           const pwdPad = " ".repeat(Math.max(minGap, width - visibleWidth(prefix) - speedW));
           const pwdLine = prefix + pwdPad + theme.fg("dim", speedRight);

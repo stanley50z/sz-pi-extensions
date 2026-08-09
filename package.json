@@ -15,8 +15,7 @@
   "bundledDependencies": ["sz-pi-subagents"],
   "pi": {
     "extensions": [
-      "./extensions",
-      "node_modules/sz-pi-subagents/extensions/subagents/index.ts"
+      "./extensions"
     ],
     "skills": [
       "./skills",

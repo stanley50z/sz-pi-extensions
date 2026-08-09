@@ -73,9 +73,12 @@ test("find_files lists entries when glob mode has no explicit pattern", async (t
   assert.match(result.content[0].text, /notes\.md/);
 });
 
-test("file search tools hide multiline results while collapsed", () => {
+test("file search tools use compact call cards and never render result bodies", () => {
   const theme = {
     fg(_color, text) {
+      return text;
+    },
+    bg(_color, text) {
       return text;
     },
   };
@@ -86,26 +89,34 @@ test("file search tools hide multiline results while collapsed", () => {
   const findCall = findFiles.renderCall(
     { pattern: "*.ts", path: "src" },
     theme,
-    { toolCallId: "find-render", invalidate() {} },
+    { toolCallId: "find-render", expanded: true, invalidate() {} },
   );
   const searchCall = searchText.renderCall(
     { pattern: "needle", path: "src" },
     theme,
-    { toolCallId: "search-render", invalidate() {} },
+    { toolCallId: "search-render", expanded: true, invalidate() {} },
   );
   const multilineResult = {
     content: [{ type: "text", text: "src/a.ts\nsrc/b.ts\nsrc/c.ts" }],
     details: {},
   };
 
-  assert.deepEqual(findCall.render(120), ["find_files *.ts in src"]);
-  assert.deepEqual(searchCall.render(120), ['search_text "needle" in src']);
+  assert.deepEqual(findCall.render(120).map((line) => line.trim()), ["", "find_files *.ts in src", ""]);
+  assert.deepEqual(searchCall.render(120).map((line) => line.trim()), ["", 'search_text "needle" in src', ""]);
   assert.deepEqual(
     findFiles.renderResult(multilineResult, { expanded: false }, theme, {}).render(120),
     [],
   );
   assert.deepEqual(
     searchText.renderResult(multilineResult, { expanded: false }, theme, {}).render(120),
+    [],
+  );
+  assert.deepEqual(
+    findFiles.renderResult(multilineResult, { expanded: true }, theme, {}).render(120),
+    [],
+  );
+  assert.deepEqual(
+    searchText.renderResult(multilineResult, { expanded: true }, theme, {}).render(120),
     [],
   );
 });

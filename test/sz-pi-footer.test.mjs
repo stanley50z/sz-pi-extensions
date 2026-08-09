@@ -340,6 +340,32 @@ test('footer shows zero token speed before the first assistant response', async 
   }
 });
 
+test('short cwd keeps the session name centered', async () => {
+  const originalCwd = process.cwd();
+  const repo = await createCleanRepo();
+  process.chdir(repo);
+
+  try {
+    const { default: installFooterExtension } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext({
+      cwd: process.env.HOME,
+      sessionName: 'centered-session',
+    });
+
+    installFooterExtension(pi);
+    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+
+    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+    const lines = footer.render(80);
+
+    assert.equal(stripVTControlCharacters(lines[0]).indexOf('centered-session'), 32);
+    assert.match(lines[0], /0 tok\/s$/);
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
+
 test('long cwd and branch push the session name right instead of forcing it to center', async () => {
   const originalCwd = process.cwd();
   const repo = await createCleanRepo();

@@ -47,14 +47,47 @@ type UltraCollapsedGroup = ToolGroup & {
   callIds: Set<string>;
 };
 
-const toolCache = new Map<string, BuiltInTools>();
-const collapsedGroups = new Map<string, ToolGroup>();
-const ultraCollapsedGroups = new Map<string, UltraCollapsedGroup>();
-const inlineNarratives = new Set<string>();
-const renderInvalidators = new Map<string, () => void>();
-let activeUltraCollapsedGroup: UltraCollapsedGroup | undefined;
+type ToolRenderTheme = {
+  fg(color: "toolTitle" | "accent" | "muted" | "toolOutput", text: string): string;
+};
 
-const groupedNouns: Record<BuiltInToolName, [singular: string, plural: string]> = {
+export type MinimalToolOutputOptions = {
+  nouns?: [singular: string, plural: string];
+  formatCall?: (args: Record<string, unknown>, theme: ToolRenderTheme) => string;
+};
+
+type MinimalToolOutputState = {
+  collapsedGroups: Map<string, ToolGroup>;
+  ultraCollapsedGroups: Map<string, UltraCollapsedGroup>;
+  inlineNarratives: Set<string>;
+  renderInvalidators: Map<string, () => void>;
+  minimalToolOptions: Map<string, MinimalToolOutputOptions>;
+  activeUltraCollapsedGroup?: UltraCollapsedGroup;
+};
+
+type MinimalToolOutputGlobal = typeof globalThis & {
+  __szPiMinimalToolOutputStateV1?: MinimalToolOutputState;
+};
+
+const sharedGlobal = globalThis as MinimalToolOutputGlobal;
+const sharedState = sharedGlobal.__szPiMinimalToolOutputStateV1 ??= {
+  collapsedGroups: new Map<string, ToolGroup>(),
+  ultraCollapsedGroups: new Map<string, UltraCollapsedGroup>(),
+  inlineNarratives: new Set<string>(),
+  renderInvalidators: new Map<string, () => void>(),
+  minimalToolOptions: new Map<string, MinimalToolOutputOptions>(),
+};
+
+const toolCache = new Map<string, BuiltInTools>();
+const {
+  collapsedGroups,
+  ultraCollapsedGroups,
+  inlineNarratives,
+  renderInvalidators,
+  minimalToolOptions,
+} = sharedState;
+
+const builtInNouns: Record<BuiltInToolName, [singular: string, plural: string]> = {
   read: ["file", "files"],
   bash: ["command", "commands"],
   edit: ["file", "files"],
@@ -164,7 +197,7 @@ function indexToolGroups(content: readonly unknown[]): void {
   const calls = content.filter(isToolCallContent);
   for (const call of calls) collapsedGroups.delete(call.id);
 
-  const builtInCalls = calls.filter((call) => call.name in groupedNouns);
+  const builtInCalls = calls.filter((call) => minimalToolOptions.has(call.name));
   const narrative = inlineNarrative(content);
   const hasNarrative = hasNarrativeContent(content);
   if (builtInCalls.length > 0) {
@@ -181,17 +214,17 @@ function indexToolGroups(content: readonly unknown[]): void {
         narrativeType: narrative?.type,
         callIds: new Set<string>(),
       };
-      activeUltraCollapsedGroup = group;
+      sharedState.activeUltraCollapsedGroup = group;
       if (narrative) {
         inlineNarratives.add(narrativeKey(narrative.type, narrative.markdown));
       }
     } else {
-      group = existingGroup ?? activeUltraCollapsedGroup ?? {
+      group = existingGroup ?? sharedState.activeUltraCollapsedGroup ?? {
         firstId: builtInCalls[0].id,
         count: 0,
         callIds: new Set<string>(),
       };
-      activeUltraCollapsedGroup = group;
+      sharedState.activeUltraCollapsedGroup = group;
       if (
         narrative &&
         (group.narrative !== narrative.markdown || group.narrativeType !== narrative.type)
@@ -212,7 +245,7 @@ function indexToolGroups(content: readonly unknown[]): void {
     group.count = group.callIds.size;
     for (const callId of group.callIds) renderInvalidators.get(callId)?.();
   } else if (hasNarrative) {
-    activeUltraCollapsedGroup = undefined;
+    sharedState.activeUltraCollapsedGroup = undefined;
   }
 
   let start = 0;
@@ -220,7 +253,7 @@ function indexToolGroups(content: readonly unknown[]): void {
     let end = start + 1;
     while (end < calls.length && calls[end].name === calls[start].name) end += 1;
 
-    if (end - start > 1 && calls[start].name in groupedNouns) {
+    if (end - start > 1 && minimalToolOptions.has(calls[start].name)) {
       const group = { firstId: calls[start].id, count: end - start };
       for (let index = start; index < end; index += 1) {
         collapsedGroups.set(calls[index].id, group);
@@ -250,8 +283,7 @@ function firstLineArg(args: Record<string, unknown>, key: string, fallback: stri
 function formatToolCall(
   name: BuiltInToolName,
   args: Record<string, unknown>,
-  theme: { fg(color: "toolTitle" | "accent" | "muted" | "toolOutput", text: string): string },
-  additionalCount: number,
+  theme: ToolRenderTheme,
 ): string {
   const path = shortenPath(stringArg(args, "path", "."));
   let title = theme.fg("toolTitle", name);
@@ -266,26 +298,18 @@ function formatToolCall(
     detail = `${theme.fg("accent", `/${stringArg(args, "pattern", "")}/`)}${theme.fg("toolOutput", ` in ${path}`)}`;
   }
 
-  if (additionalCount === 0) return `${title} ${detail}`;
-  const [singular, plural] = groupedNouns[name];
-  const noun = additionalCount === 1 ? singular : plural;
-  return `${title} ${detail}${theme.fg("muted", ` and ${additionalCount} ${noun}`)}`;
+  return `${title} ${detail}`;
 }
 
-function registerMinimalTool<TParams extends TSchema, TDetails>(
-  pi: ExtensionAPI,
-  select: (tools: BuiltInTools) => ToolDefinition<TParams, TDetails>,
-): void {
-  const tool = select(getBuiltInTools(process.cwd()));
-  const name = tool.name as BuiltInToolName;
+export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
+  tool: ToolDefinition<TParams, TDetails>,
+  options: MinimalToolOutputOptions = {},
+): ToolDefinition<TParams, TDetails> {
+  minimalToolOptions.set(tool.name, options);
 
-  pi.registerTool<TParams, TDetails>({
+  return {
     ...tool,
     renderShell: "self",
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const scopedTool = select(getBuiltInTools(ctx.cwd));
-      return scopedTool.execute(toolCallId, params, signal, onUpdate, ctx);
-    },
     renderCall(args, theme, context) {
       renderInvalidators.set(context.toolCallId, context.invalidate);
 
@@ -295,7 +319,7 @@ function registerMinimalTool<TParams extends TSchema, TDetails>(
         const group = ultraCollapsedGroups.get(context.toolCallId);
         if (group && group.firstId !== context.toolCallId) return new Container();
         const count = group?.count ?? 1;
-        const countText = `${count} tool ${count === 1 ? "call" : "calls"}`;
+        const countText = `+ ${count} tool ${count === 1 ? "call" : "calls"}`;
         if (group?.narrative) {
           return renderNarrative(group.narrative, group.narrativeType, countText, theme);
         }
@@ -308,9 +332,14 @@ function registerMinimalTool<TParams extends TSchema, TDetails>(
       }
 
       const additionalCount = group ? group.count - 1 : 0;
-      const line = new OneLine(
-        formatToolCall(name, args as Record<string, unknown>, theme, additionalCount),
-      );
+      let text = options.formatCall?.(args as Record<string, unknown>, theme) ??
+        theme.fg("toolTitle", tool.name);
+      if (additionalCount > 0) {
+        const [singular, plural] = options.nouns ?? ["call", "calls"];
+        const noun = additionalCount === 1 ? singular : plural;
+        text += theme.fg("muted", ` and ${additionalCount} ${noun}`);
+      }
+      const line = new OneLine(text);
       const background = context.isError
         ? "toolErrorBg"
         : context.isPartial === false
@@ -333,7 +362,31 @@ function registerMinimalTool<TParams extends TSchema, TDetails>(
     renderResult() {
       return new Container();
     },
-  });
+  };
+}
+
+function registerMinimalTool<TParams extends TSchema, TDetails>(
+  pi: ExtensionAPI,
+  select: (tools: BuiltInTools) => ToolDefinition<TParams, TDetails>,
+): void {
+  const tool = select(getBuiltInTools(process.cwd()));
+  const name = tool.name as BuiltInToolName;
+
+  pi.registerTool<TParams, TDetails>(
+    withMinimalToolOutput(
+      {
+        ...tool,
+        async execute(toolCallId, params, signal, onUpdate, ctx) {
+          const scopedTool = select(getBuiltInTools(ctx.cwd));
+          return scopedTool.execute(toolCallId, params, signal, onUpdate, ctx);
+        },
+      },
+      {
+        nouns: builtInNouns[name],
+        formatCall: (args, theme) => formatToolCall(name, args, theme),
+      },
+    ),
+  );
 }
 
 export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
@@ -341,7 +394,7 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
   ultraCollapsedGroups.clear();
   inlineNarratives.clear();
   renderInvalidators.clear();
-  activeUltraCollapsedGroup = undefined;
+  sharedState.activeUltraCollapsedGroup = undefined;
 
   pi.registerMarkdownTransformer((markdown, context) => {
     if (
@@ -354,7 +407,7 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("message_start", (event) => {
-    if (event.message.role === "user") activeUltraCollapsedGroup = undefined;
+    if (event.message.role === "user") sharedState.activeUltraCollapsedGroup = undefined;
   });
 
   pi.on("message_update", (event) => {
@@ -370,11 +423,11 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
     ultraCollapsedGroups.clear();
     inlineNarratives.clear();
     renderInvalidators.clear();
-    activeUltraCollapsedGroup = undefined;
+    sharedState.activeUltraCollapsedGroup = undefined;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "message") continue;
       if (entry.message.role === "user") {
-        activeUltraCollapsedGroup = undefined;
+        sharedState.activeUltraCollapsedGroup = undefined;
       } else if (entry.message.role === "assistant") {
         indexToolGroups(entry.message.content);
       }

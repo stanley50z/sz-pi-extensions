@@ -9,24 +9,10 @@ import {
   truncateHead,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { withMinimalToolOutput } from "./minimal-tool-output.ts";
 
 const SEARCH_TIMEOUT_MS = 60_000;
-
-class OneLine implements Component {
-  private readonly text: string;
-
-  constructor(text: string) {
-    this.text = text;
-  }
-
-  render(width: number): string[] {
-    return width > 0 ? [truncateToWidth(this.text, width)] : [];
-  }
-
-  invalidate(): void {}
-}
 
 function compactArg(value: string | undefined, fallback: string): string {
   return value ? value.replace(/\s+/g, " ") : fallback;
@@ -73,7 +59,7 @@ function commandFailure(tool: string, execution: { code: number; stderr: string;
 }
 
 export default function fileSearchExtension(pi: ExtensionAPI) {
-  pi.registerTool({
+  pi.registerTool(withMinimalToolOutput({
     name: "find_files",
     label: "Find Files",
     description:
@@ -113,29 +99,6 @@ export default function fileSearchExtension(pi: ExtensionAPI) {
       ),
     }),
 
-    renderCall(args, theme) {
-      const pattern = compactArg(args.pattern, args.glob ? "*" : ".");
-      const path = compactArg(args.path, ".");
-      return new OneLine(
-        `${theme.fg("toolTitle", "find_files")} ${theme.fg("accent", pattern)}${theme.fg("toolOutput", ` in ${path}`)}`,
-      );
-    },
-
-    renderResult(result, { expanded }, theme, context) {
-      if (!expanded) return new Container();
-      const output = result.content
-        .filter((item): item is Extract<typeof item, { type: "text" }> => item.type === "text")
-        .map((item) => item.text)
-        .join("\n");
-      if (!output) return new Container();
-      const color = context.isError ? "error" : "toolOutput";
-      return new Text(
-        `\n${output.split("\n").map((line) => theme.fg(color, line)).join("\n")}`,
-        0,
-        0,
-      );
-    },
-
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const args = ["--color", "never", "--max-results", String(params.limit ?? 1_000)];
       if (params.glob) args.push("--glob");
@@ -172,9 +135,16 @@ export default function fileSearchExtension(pi: ExtensionAPI) {
         },
       };
     },
-  });
+  }, {
+    nouns: ["search", "searches"],
+    formatCall(args, theme) {
+      const pattern = compactArg(typeof args.pattern === "string" ? args.pattern : undefined, args.glob ? "*" : ".");
+      const path = compactArg(typeof args.path === "string" ? args.path : undefined, ".");
+      return `${theme.fg("toolTitle", "find_files")} ${theme.fg("accent", pattern)}${theme.fg("toolOutput", ` in ${path}`)}`;
+    },
+  }));
 
-  pi.registerTool({
+  pi.registerTool(withMinimalToolOutput({
     name: "search_text",
     label: "Search Text",
     description:
@@ -213,29 +183,6 @@ export default function fileSearchExtension(pi: ExtensionAPI) {
         Type.Integer({ minimum: 1, maximum: 1_000, description: "Maximum matches in each file; defaults to 100" }),
       ),
     }),
-
-    renderCall(args, theme) {
-      const pattern = JSON.stringify(compactArg(args.pattern, ""));
-      const path = compactArg(args.path, ".");
-      return new OneLine(
-        `${theme.fg("toolTitle", "search_text")} ${theme.fg("accent", pattern)}${theme.fg("toolOutput", ` in ${path}`)}`,
-      );
-    },
-
-    renderResult(result, { expanded }, theme, context) {
-      if (!expanded) return new Container();
-      const output = result.content
-        .filter((item): item is Extract<typeof item, { type: "text" }> => item.type === "text")
-        .map((item) => item.text)
-        .join("\n");
-      if (!output) return new Container();
-      const color = context.isError ? "error" : "toolOutput";
-      return new Text(
-        `\n${output.split("\n").map((line) => theme.fg(color, line)).join("\n")}`,
-        0,
-        0,
-      );
-    },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const args = [
@@ -281,5 +228,12 @@ export default function fileSearchExtension(pi: ExtensionAPI) {
         },
       };
     },
-  });
+  }, {
+    nouns: ["search", "searches"],
+    formatCall(args, theme) {
+      const pattern = JSON.stringify(compactArg(typeof args.pattern === "string" ? args.pattern : undefined, ""));
+      const path = compactArg(typeof args.path === "string" ? args.path : undefined, ".");
+      return `${theme.fg("toolTitle", "search_text")} ${theme.fg("accent", pattern)}${theme.fg("toolOutput", ` in ${path}`)}`;
+    },
+  }));
 }
