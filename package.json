@@ -25,7 +25,7 @@
     ]
   },
   "dependencies": {
-    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/673948e.tar.gz",
+    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/9311e5b.tar.gz",
     "chrome-devtools-mcp": "^0.26.0",
     "linkedom": "^0.16.11",
     "typebox": "*"
