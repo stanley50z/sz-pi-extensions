@@ -9,6 +9,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Web research** through Ketch, including Brave and Exa search backends
 - **Code and documentation search** through Ketch
 - **Web page, PDF, and site extraction** through Ketch
+- **Credit-aware Firecrawl specialist** for managed extraction, crawling, monitoring, and parsing
 - **Chrome DevTools MCP** integration
 - **Structured user questions** through the `ask_user` tool
 - **Session transcript copying** through `/copy-all`
@@ -81,6 +82,17 @@ ketch doctor --json
 
 Ketch also supports keyless backends such as DuckDuckGo and Keenable. Pi's Ketch skill routes live web search, code search, documentation lookup, page scraping, and site crawling to the appropriate Ketch surface.
 
+## Firecrawl specialist
+
+Ketch remains the default research path. The compact `firecrawl-specialist` skill routes managed rendering, broad crawls, monitoring, structured extraction, and local document parsing to the optional Firecrawl CLI without installing Firecrawl's large global skill pack.
+
+Install and authenticate the CLI separately when this specialist capability is needed, then verify it with:
+
+```bash
+firecrawl --status
+```
+
+The skill checks available credits and concurrency, keeps requests narrow, and routes authenticated user-browser work to browser-harness instead.
 
 ## Chrome Annotation MVP
 
