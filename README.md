@@ -64,7 +64,9 @@ Git View and the footer's clickable change count activate only when the current 
 
 ## Launch modes
 
-On first interactive startup, select **Core**, **Lark**, **Remotion**, or **Lark + Remotion**. The choice is stored in `~/.pi/agent/launch-modes.json` and reused by later sessions. Run `/launch-mode` to select again, or use `/launch-mode core`, `/launch-mode lark`, `/launch-mode remotion`, or `/launch-mode all` directly.
+On first interactive startup, **Core** is always enabled. Move with ↑/↓, press Space to toggle **Remotion** and **Lark** independently, then press Enter to confirm. The selection is stored in `~/.pi/agent/launch-modes.json` and reused by later sessions.
+
+Run `/launch-mode` to open the multi-select again. For direct selection, use `/launch-mode core`, `/launch-mode remotion`, `/launch-mode lark`, `/launch-mode remotion lark`, or `/launch-mode all`.
 
 The extension filters disabled suites out of the model system prompt. To also hide them from Pi's startup resource list and slash-command discovery, add these exclusions to `~/.pi/agent/settings.json`:
 
@@ -74,7 +76,7 @@ The extension filters disabled suites out of the model system prompt. To also hi
 }
 ```
 
-Selected suites are re-added dynamically. `launch-modes.json` is editable; each mode has a label, description, and `skillPaths` list. Wildcards are supported in the final path segment.
+Selected suites are re-added dynamically. `launch-modes.json` is editable; each suite has a label, description, and `skillPaths` list. Wildcards are supported in the final path segment.
 
 ## Fast mode
 

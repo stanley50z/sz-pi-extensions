@@ -9,45 +9,35 @@ import {
   type ExtensionContext,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 const STATE_FILENAME = "launch-modes.json";
-const STATUS_KEY = "launch-mode";
 
-interface LaunchMode {
+interface LaunchSuite {
   label: string;
   description: string;
   skillPaths: string[];
 }
 
 interface LaunchModeConfig {
-  activeMode: string;
-  modes: Record<string, LaunchMode>;
+  selectedSuites: string[];
+  suites: Record<string, LaunchSuite>;
 }
 
 function defaultConfig(): LaunchModeConfig {
   const skillRoot = join(homedir(), ".agents", "skills");
   return {
-    activeMode: "core",
-    modes: {
-      core: {
-        label: "Core",
-        description: "Default skills without optional suites",
-        skillPaths: [],
+    selectedSuites: [],
+    suites: {
+      remotion: {
+        label: "Remotion",
+        description: "Video creation, captions, rendering, and Remotion workflows",
+        skillPaths: [join(skillRoot, "remotion-*")],
       },
       lark: {
         label: "Lark",
-        description: "Core plus the Lark skill suite",
+        description: "Lark documents, messaging, meetings, tasks, and other Lark workflows",
         skillPaths: [join(skillRoot, "lark-*")],
-      },
-      remotion: {
-        label: "Remotion",
-        description: "Core plus the Remotion skill suite",
-        skillPaths: [join(skillRoot, "remotion-*")],
-      },
-      all: {
-        label: "Lark + Remotion",
-        description: "Core plus both optional skill suites",
-        skillPaths: [join(skillRoot, "lark-*"), join(skillRoot, "remotion-*")],
       },
     },
   };
@@ -55,7 +45,27 @@ function defaultConfig(): LaunchModeConfig {
 
 function readConfig(path: string): LaunchModeConfig | undefined {
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as LaunchModeConfig;
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    if (Array.isArray(parsed.selectedSuites) && parsed.suites && typeof parsed.suites === "object") {
+      return parsed as unknown as LaunchModeConfig;
+    }
+    if (typeof parsed.activeMode === "string" && parsed.modes && typeof parsed.modes === "object") {
+      const migrated = defaultConfig();
+      const legacyModes = parsed.modes as Record<string, { skillPaths?: unknown }>;
+      for (const id of Object.keys(migrated.suites)) {
+        if (Array.isArray(legacyModes[id]?.skillPaths)) {
+          migrated.suites[id].skillPaths = legacyModes[id].skillPaths as string[];
+        }
+      }
+      migrated.selectedSuites = parsed.activeMode === "all"
+        ? Object.keys(migrated.suites)
+        : parsed.activeMode === "core"
+          ? []
+          : [parsed.activeMode].filter((id) => Boolean(migrated.suites[id]));
+      writeConfig(path, migrated);
+      return migrated;
+    }
+    throw new Error('expected "selectedSuites" and "suites"');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw new Error(`Cannot read launch mode config from ${path}: ${(error as Error).message}`);
@@ -73,8 +83,57 @@ function writeConfig(path: string, config: LaunchModeConfig): void {
   }
 }
 
-function modeIdForLabel(config: LaunchModeConfig, label: string): string | undefined {
-  return Object.entries(config.modes).find(([, mode]) => mode.label === label)?.[0];
+async function selectSuites(ctx: ExtensionContext, config: LaunchModeConfig): Promise<string[] | null> {
+  const suiteEntries = Object.entries(config.suites);
+  const rows = [{ id: "core", label: "Core", description: "Always enabled" }, ...suiteEntries.map(([id, suite]) => ({
+    id,
+    label: suite.label,
+    description: suite.description,
+  }))];
+  const selectedSuites = new Set(config.selectedSuites);
+
+  return ctx.ui.custom<string[] | null>((tui, theme, keybindings, done) => {
+    let selectedIndex = 0;
+
+    return {
+      render(width: number): string[] {
+        const lines = [theme.fg("accent", theme.bold("Launch features")), ""];
+        for (let index = 0; index < rows.length; index++) {
+          const row = rows[index];
+          const focused = index === selectedIndex;
+          const enabled = row.id === "core" || selectedSuites.has(row.id);
+          const cursor = focused ? theme.fg("accent", "› ") : "  ";
+          const checkbox = enabled ? theme.fg("success", "[✓]") : theme.fg("dim", "[ ]");
+          const suffix = row.id === "core" ? theme.fg("dim", " (always on)") : "";
+          const label = focused ? theme.fg("accent", row.label) : row.label;
+          lines.push(truncateToWidth(`${cursor}${checkbox} ${label}${suffix}`, width, ""));
+        }
+        lines.push("", theme.fg("dim", "↑↓ navigate • space toggle • enter confirm • esc cancel"));
+        return lines.map((line) => truncateToWidth(line, width, ""));
+      },
+      invalidate() {},
+      handleInput(data: string): void {
+        if (keybindings.matches(data, "tui.select.up")) {
+          selectedIndex = selectedIndex === 0 ? rows.length - 1 : selectedIndex - 1;
+        } else if (keybindings.matches(data, "tui.select.down")) {
+          selectedIndex = selectedIndex === rows.length - 1 ? 0 : selectedIndex + 1;
+        } else if (matchesKey(data, Key.space)) {
+          const id = rows[selectedIndex].id;
+          if (id !== "core") {
+            if (selectedSuites.has(id)) selectedSuites.delete(id);
+            else selectedSuites.add(id);
+          }
+        } else if (keybindings.matches(data, "tui.select.confirm")) {
+          done(suiteEntries.map(([id]) => id).filter((id) => selectedSuites.has(id)));
+          return;
+        } else if (keybindings.matches(data, "tui.select.cancel")) {
+          done(null);
+          return;
+        }
+        tui.requestRender();
+      },
+    };
+  });
 }
 
 function wildcardRegex(pattern: string): RegExp {
@@ -102,11 +161,17 @@ function isInside(path: string, root: string): boolean {
   return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
 }
 
+function selectedSkillPaths(config: LaunchModeConfig): string[] {
+  return config.selectedSuites.flatMap((id) => {
+    const suite = config.suites[id];
+    if (!suite) throw new Error(`Unknown selected launch suite: ${id}`);
+    return suite.skillPaths.flatMap(expandSkillPath);
+  });
+}
+
 function filterSkills(skills: Skill[], config: LaunchModeConfig): Skill[] {
-  const managedRoots = Object.values(config.modes).flatMap((mode) => mode.skillPaths.flatMap(expandSkillPath));
-  const activeMode = config.modes[config.activeMode];
-  if (!activeMode) throw new Error(`Unknown active launch mode: ${config.activeMode}`);
-  const activeRoots = activeMode.skillPaths.flatMap(expandSkillPath);
+  const managedRoots = Object.values(config.suites).flatMap((suite) => suite.skillPaths.flatMap(expandSkillPath));
+  const activeRoots = selectedSkillPaths(config);
   return skills.filter((skill) => {
     const managed = managedRoots.some((root) => isInside(skill.filePath, root));
     return !managed || activeRoots.some((root) => isInside(skill.filePath, root));
@@ -117,30 +182,32 @@ export default function launchModeExtension(pi: ExtensionAPI) {
   const configPath = join(getAgentDir(), STATE_FILENAME);
   let config = readConfig(configPath);
 
-  function updateStatus(ctx: ExtensionContext): void {
-    ctx.ui.setStatus(STATUS_KEY, `mode:${config?.activeMode ?? "core"}`);
-  }
-
   pi.registerCommand("launch-mode", {
-    description: "Switch the active skill-suite launch mode",
+    description: "Choose optional skill suites to load with Core",
     handler: async (args, ctx) => {
       if (!config) config = defaultConfig();
-      let nextMode = args.trim();
-      if (!nextMode) {
-        const selected = await ctx.ui.select(
-          "Launch mode",
-          Object.values(config.modes).map((mode) => mode.label),
-        );
-        if (!selected) return;
-        nextMode = modeIdForLabel(config, selected) ?? "";
+      let selected: string[] | null;
+      const requested = args.trim();
+      if (!requested) {
+        if (ctx.mode !== "tui") {
+          ctx.ui.notify("/launch-mode requires TUI mode when no suites are specified", "error");
+          return;
+        }
+        selected = await selectSuites(ctx, config);
+      } else {
+        const ids = requested.split(/[\s,]+/).filter(Boolean);
+        selected = ids.includes("all") ? Object.keys(config.suites) : ids.filter((id) => id !== "core");
+        const unknown = selected.filter((id) => !config.suites[id]);
+        if (unknown.length > 0) {
+          ctx.ui.notify(`Unknown launch suites: ${unknown.join(", ")}`, "error");
+          return;
+        }
       }
-      if (!config.modes[nextMode]) {
-        ctx.ui.notify(`Unknown launch mode "${nextMode}". Available: ${Object.keys(config.modes).join(", ")}`, "error");
-        return;
-      }
-      config.activeMode = nextMode;
+      if (!selected) return;
+      config.selectedSuites = Object.keys(config.suites).filter((id) => selected.includes(id));
       writeConfig(configPath, config);
-      ctx.ui.notify(`Launch mode changed to ${config.modes[nextMode].label}`, "info");
+      const labels = config.selectedSuites.map((id) => config!.suites[id].label);
+      ctx.ui.notify(`Launch features updated: Core${labels.length ? ` + ${labels.join(" + ")}` : ""}`, "info");
       await ctx.reload();
       return;
     },
@@ -150,20 +217,18 @@ export default function launchModeExtension(pi: ExtensionAPI) {
     if (!config) {
       config = defaultConfig();
       if (ctx.mode === "tui" && ctx.hasUI) {
-        const labels = Object.values(config.modes).map((mode) => mode.label);
-        const selected = await ctx.ui.select("Launch mode", labels);
-        const selectedId = selected ? modeIdForLabel(config, selected) : undefined;
-        if (selectedId) config.activeMode = selectedId;
-        writeConfig(configPath, config);
+        const selected = await selectSuites(ctx, config);
+        if (selected) {
+          config.selectedSuites = selected;
+          writeConfig(configPath, config);
+        }
       }
     }
-    updateStatus(ctx);
   });
 
   pi.on("resources_discover", () => {
-    const activeMode = config?.modes[config.activeMode];
-    if (!activeMode) throw new Error(`Unknown active launch mode: ${config?.activeMode}`);
-    return { skillPaths: activeMode.skillPaths.flatMap(expandSkillPath) };
+    if (!config) throw new Error("Launch feature configuration is not initialized");
+    return { skillPaths: selectedSkillPaths(config) };
   });
 
   pi.on("before_agent_start", (event) => {
