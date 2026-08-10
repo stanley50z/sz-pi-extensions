@@ -19,6 +19,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
+- **Codex-style manual skill invocation** through `$skill-name` with `$` autocomplete
 - **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5 to `high`
 - **Git view** and other local workflow helpers
 
@@ -61,6 +62,10 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 Built-in file and shell tools, local search tools, and subagent tools never render result bodies or image previews. Press Ctrl+O to switch between the collapsed view (grouped one-line call cards) and the ultra-collapsed view, where every supported tool—across separately loaded extensions—contributes to the `+ N tool calls` summary attached to its one-line narration and consecutive tool-only turns are combined.
 
 Git View and the footer's clickable change count activate only when the current session working directory belongs to a Git repository.
+
+## Manual skill invocation
+
+Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill-name` with any additional instructions. A loaded `$skill-name` mention at the start or within a prompt invokes the same Pi skill expansion as `/skill:skill-name`; unknown `$name` text is left unchanged.
 
 ## Skill suites
 
