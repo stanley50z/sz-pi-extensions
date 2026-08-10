@@ -12,9 +12,9 @@ function createFakePi() {
     },
     getCommands() {
       return [
-        { name: 'tdd', description: 'Test-driven development', source: 'skill' },
-        { name: 'research', description: 'Research a topic', source: 'skill' },
-        { name: 'commit', description: 'Commit and push changes', source: 'skill' },
+        { name: 'skill:tdd', description: 'Test-driven development', source: 'skill' },
+        { name: 'skill:research', description: 'Research a topic', source: 'skill' },
+        { name: 'skill:commit', description: 'Commit and push changes', source: 'skill' },
         { name: 'review', description: 'Review prompt', source: 'prompt' },
         { name: 'fast', description: 'Toggle fast mode', source: 'extension' },
       ];

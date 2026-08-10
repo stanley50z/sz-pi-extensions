@@ -10,14 +10,21 @@ function extractSkillToken(lines: string[], cursorLine: number, cursorCol: numbe
   return textBeforeCursor.match(/(?:^|[ \t])\$([a-z0-9-]*)$/)?.[1];
 }
 
+function skillName(commandName: string): string {
+  return commandName.startsWith("skill:") ? commandName.slice("skill:".length) : commandName;
+}
+
 function skillItems(pi: ExtensionAPI, query: string): AutocompleteItem[] {
   const skills = pi.getCommands()
     .filter((command) => command.source === "skill")
-    .map((command) => ({
-      value: `$${command.name}`,
-      label: `$${command.name}`,
-      ...(command.description ? { description: command.description } : {}),
-    }));
+    .map((command) => {
+      const name = skillName(command.name);
+      return {
+        value: `$${name}`,
+        label: `$${name}`,
+        ...(command.description ? { description: command.description } : {}),
+      };
+    });
 
   if (!query) return skills;
   return fuzzyFilter(skills, query, (item) => item.value.slice(1));
@@ -68,7 +75,9 @@ interface SkillMention {
 
 function firstLoadedSkillMention(pi: ExtensionAPI, text: string): SkillMention | undefined {
   const loadedSkills = new Set(
-    pi.getCommands().filter((command) => command.source === "skill").map((command) => command.name),
+    pi.getCommands()
+      .filter((command) => command.source === "skill")
+      .map((command) => skillName(command.name)),
   );
   const mentions = text.matchAll(/\$([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g);
   for (const mention of mentions) {
