@@ -55,7 +55,7 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 ## Local workflow tools
 
-`ask_user` presents two to five choices and always includes a free-form answer. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
+`ask_user` presents two to five choices and always includes a free-form answer; in the TUI, highlight “Type my own answer” and begin typing immediately. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
 
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
 
