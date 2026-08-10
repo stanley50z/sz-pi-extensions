@@ -18,7 +18,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
-- **Remembered launch modes** that keep Lark and Remotion skills out of context until enabled
+- **Toggleable skill suites** through `/ss`, grouping optional skills and tools
 - **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5 to `high`
 - **Git view** and other local workflow helpers
 
@@ -62,13 +62,15 @@ Built-in file and shell tools, local search tools, and subagent tools never rend
 
 Git View and the footer's clickable change count activate only when the current session working directory belongs to a Git repository.
 
-## Launch modes
+## Skill suites
 
-On first interactive startup, **Core** is always enabled. Move with ↑/↓, press Space to toggle **Remotion** and **Lark** independently, then press Enter to confirm. The selection is stored in `~/.pi/agent/launch-modes.json` and reused by later sessions.
+Run `/ss` to open a multi-select panel. Move with ↑/↓, press Space to toggle suites independently, then press Enter to apply. Each suite can control both skill paths and registered Pi tool names.
 
-Run `/launch-mode` to open the multi-select again. For direct selection, use `/launch-mode core`, `/launch-mode remotion`, `/launch-mode lark`, `/launch-mode remotion lark`, or `/launch-mode all`.
+Selections are remembered per resolved project cwd. Every project's selection and all suite definitions live together in the single global file `~/.pi/agent/skill-suites.json`; Pi does not create a config file inside each project or session directory.
 
-The extension filters disabled suites out of the model system prompt. To also hide them from Pi's startup resource list and slash-command discovery, add these exclusions to `~/.pi/agent/settings.json`:
+Run `/ss <description>` to ask the agent to propose a new suite or edits to existing suites. The agent receives the current configuration and registered tool names, presents the exact JSON change, and waits for approval before editing.
+
+The extension filters disabled suite skills out of the model system prompt and disables their managed tools. To also hide optional skills from Pi's default discovery, add exclusions to `~/.pi/agent/settings.json`:
 
 ```json
 {
@@ -76,7 +78,7 @@ The extension filters disabled suites out of the model system prompt. To also hi
 }
 ```
 
-Selected suites are re-added dynamically. `launch-modes.json` is editable; each suite has a label, description, and `skillPaths` list. Wildcards are supported in the final path segment.
+Selected suite skills are re-added dynamically. Each `skill-suites.json` suite has a label, description, `skillPaths`, and `tools`. Skill-path wildcards are supported in the final path segment.
 
 ## Fast mode
 
