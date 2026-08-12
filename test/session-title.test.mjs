@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import sessionTitle, { RESTORE_TERMINAL_TITLE_EVENT } from "../extensions/session-title.ts";
-import { announceChromeReady } from "../extensions/chrome-devtools/events.ts";
 
 function setup(initialName) {
   const handlers = new Map();
@@ -36,14 +35,6 @@ test("terminal title can be restored after a child process overwrites it", async
   await state.handlers.get("session_start")({}, state.ctx);
   state.eventHandlers.get(RESTORE_TERMINAL_TITLE_EVENT)();
   assert.equal(state.titles.at(-1), "Pi - Restore me");
-});
-
-test("Chrome MCP readiness restores the Pi title after its child process changes it", async () => {
-  const state = setup("Browser debugging");
-  await state.handlers.get("session_start")({}, state.ctx);
-  state.titles.push("chrome-devtools-mcp");
-  announceChromeReady(state.pi, state.ctx);
-  assert.equal(state.titles.at(-1), "Pi - Browser debugging");
 });
 
 test("untitled sessions still use a Pi-prefixed title", async () => {

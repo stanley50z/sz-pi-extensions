@@ -65,6 +65,27 @@ test("ask_user presents choices and returns the selected answer", async () => {
   });
 });
 
+test("ask_user selects a listed answer with a top-row number key", async () => {
+  const state = setup({ keys: ["2"] });
+  const result = await state.tool.execute("call-2", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.content[0].text, "User selected option 2: Manual");
+  assert.deepEqual(result.details, {
+    outcome: "selected",
+    question: params.question,
+    answer: "Manual",
+    selectedIndex: 2,
+  });
+});
+
+test("ask_user selects a listed answer with a numpad number key", async () => {
+  const state = setup({ keys: ["\x1b[57401u"] });
+  const result = await state.tool.execute("call-3", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.content[0].text, "User selected option 2: Manual");
+  assert.equal(result.details.selectedIndex, 2);
+});
+
 test("ask_user accepts typing immediately when the in-place custom answer is highlighted", async () => {
   const answer = "Use the team preset";
   const state = setup({

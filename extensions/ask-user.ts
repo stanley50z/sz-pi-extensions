@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   Input,
+  matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -8,6 +9,7 @@ import {
 import { Type } from "typebox";
 
 const CUSTOM_CHOICE = "Type my own answer";
+const NUMBER_KEYS = ["1", "2", "3", "4", "5", "6"] as const;
 
 const AskUserParameters = Type.Object({
   question: Type.String({
@@ -164,6 +166,18 @@ export default function askUserExtension(pi: ExtensionAPI) {
               optionIndex = Math.min(customIndex, optionIndex + 1);
               refresh();
               return;
+            }
+            if (optionIndex !== customIndex) {
+              const numberedIndex = NUMBER_KEYS.findIndex((key) => matchesKey(data, key));
+              if (numberedIndex >= 0 && numberedIndex <= customIndex) {
+                if (numberedIndex === customIndex) {
+                  optionIndex = customIndex;
+                  refresh();
+                } else {
+                  finish({ kind: "selected", index: numberedIndex });
+                }
+                return;
+              }
             }
             if (optionIndex === customIndex) {
               input.handleInput(data);

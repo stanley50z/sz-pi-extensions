@@ -10,7 +10,6 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Code and documentation search** through Ketch
 - **Web page, PDF, and site extraction** through Ketch
 - **Credit-aware Firecrawl specialist** for managed extraction, crawling, monitoring, and parsing
-- **Chrome DevTools MCP** integration
 - **Structured user questions** through the `ask_user` tool
 - **Session transcript copying** through `/copy-all`
 - **First-class local search** through `find_files` and `search_text`
@@ -18,6 +17,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
+- **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
 - **Codex-style manual skill invocation** through `$skill-name` with `$` autocomplete
 - **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5 to `high`
@@ -84,6 +84,12 @@ The extension filters disabled suite skills out of the model system prompt and d
 ```
 
 Selected suite skills are re-added dynamically. Each `skill-suites.json` suite has a label, description, `skillPaths`, and `tools`. Skill-path wildcards are supported in the final path segment.
+
+## Synced keybindings
+
+The package merges its preferred keybindings into `~/.pi/agent/keybindings.json` whenever Pi loads it. Existing unrelated user bindings are preserved. Currently it adds Ctrl+Backspace to `tui.editor.deleteWordBackward`, alongside Pi's Ctrl+W and Alt+Backspace defaults.
+
+Because this preference lives in the tracked extension, installing the package on another machine recreates it without separately syncing `keybindings.json`.
 
 ## Fast mode
 

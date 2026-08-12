@@ -1,7 +1,7 @@
 {
   "name": "sz-pi-extensions",
   "version": "1.0.0",
-  "description": "SZ pi extensions — enhanced footer, git view, Chrome DevTools, Ketch research, and more",
+  "description": "SZ pi extensions — enhanced footer, git view, Ketch research, and more",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -25,7 +25,6 @@
   },
   "dependencies": {
     "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/1dfc46e.tar.gz",
-    "chrome-devtools-mcp": "^0.26.0",
     "linkedom": "^0.16.11",
     "typebox": "*"
   },
