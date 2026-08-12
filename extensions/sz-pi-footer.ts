@@ -2,14 +2,18 @@
  * sz-pi-footer — enhanced pi footer with token speed and git diff stats.
  *
  * Shows the default footer info plus:
- * - Token speed (output tokens/second for the most recent turn)
+ * - Token speed (live output tokens/second, finalized for the most recent response)
  * - Git diff stats (+X −Y) centred, when in a repo with uncommitted changes
  *
  * Non-git directories and clean trees fall back to the default footer layout.
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  estimateTokens,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { hyperlink, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFileSync } from "node:child_process";
 import {
@@ -145,11 +149,17 @@ function formatModelName(model: string): string {
 // ── token speed tracking ──────────────────────────────────────────────
 
 let lastTurnStart: number | null = null;
+let generationStart: number | null = null;
+let liveOutputTokensPerSec: number | null = null;
 let lastOutputTokensPerSec: number | null = null;
+let speedFinalizedForTurn = false;
 
 function resetSpeed() {
   lastTurnStart = null;
+  generationStart = null;
+  liveOutputTokensPerSec = null;
   lastOutputTokensPerSec = null;
+  speedFinalizedForTurn = false;
 }
 
 // ── extension ─────────────────────────────────────────────────────────
@@ -160,6 +170,7 @@ export default function (pi: ExtensionAPI) {
   let codexRateLimitWindows: CodexRateLimitWindow[] | null = null;
   let codexRateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
   let rateLimitRefresh: Promise<void> | null = null;
+  let requestFooterRender: (() => void) | null = null;
 
   const unsubscribeGitViewUrl = pi.events.on(GIT_VIEW_URL_EVENT, (data) => {
     const nextUrl = extractGitViewUrl(data);
@@ -220,12 +231,53 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     unsubscribeGitViewUrl();
     unsubscribeCodexRateLimits();
+    requestFooterRender = null;
     _ctx = null;
   });
 
-  // ── track turn timing ──────────────────────────────────────────────
+  // ── track token speed ──────────────────────────────────────────────
   pi.on("turn_start", async () => {
     lastTurnStart = Date.now();
+    speedFinalizedForTurn = false;
+  });
+
+  pi.on("message_start", async (event) => {
+    if (event.message.role !== "assistant") return;
+    generationStart = Date.now();
+    liveOutputTokensPerSec = null;
+    requestFooterRender?.();
+  });
+
+  pi.on("message_update", async (event) => {
+    if (event.message.role !== "assistant") return;
+    generationStart ??= Date.now();
+
+    const elapsedSec = (Date.now() - generationStart) / 1000;
+    const reportedTokens = event.message.usage.output;
+    const outputTokens = reportedTokens > 0 ? reportedTokens : estimateTokens(event.message);
+    if (elapsedSec > 0 && outputTokens > 0) {
+      liveOutputTokensPerSec = outputTokens / elapsedSec;
+      requestFooterRender?.();
+    }
+  });
+
+  pi.on("message_end", async (event) => {
+    if (event.message.role !== "assistant") return;
+
+    const elapsedSec = generationStart === null
+      ? 0
+      : (Date.now() - generationStart) / 1000;
+    const outputTokens = event.message.usage.output;
+    if (elapsedSec > 0 && outputTokens > 0) {
+      lastOutputTokensPerSec = outputTokens / elapsedSec;
+      speedFinalizedForTurn = true;
+    } else if (liveOutputTokensPerSec !== null && liveOutputTokensPerSec > 0) {
+      lastOutputTokensPerSec = liveOutputTokensPerSec;
+    }
+
+    generationStart = null;
+    liveOutputTokensPerSec = null;
+    requestFooterRender?.();
   });
 
   pi.on("thinking_level_select", async (_event, ctx) => {
@@ -240,25 +292,22 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", async (_event, ctx) => {
-    if (lastTurnStart === null) return;
-
-    // Sum output tokens for the most recent assistant message
-    let outputTokens = 0;
-    const branch = ctx.sessionManager.getBranch();
-    for (let i = branch.length - 1; i >= 0; i--) {
-      const entry = branch[i];
-      if (entry.type === "message" && entry.message.role === "assistant") {
-        const m = entry.message as AssistantMessage;
-        outputTokens = m.usage.output;
-        break;
+    // Compatibility fallback for runtimes that do not emit assistant message
+    // lifecycle events. Current runtimes finalize from message_end instead so
+    // provider wait time and tool execution are excluded from generation speed.
+    if (!speedFinalizedForTurn && lastTurnStart !== null) {
+      const message = _event.message;
+      if (message.role === "assistant") {
+        const elapsedSec = (Date.now() - lastTurnStart) / 1000;
+        const outputTokens = message.usage.output;
+        if (elapsedSec > 0 && outputTokens > 0) {
+          lastOutputTokensPerSec = outputTokens / elapsedSec;
+        }
       }
     }
 
-    const elapsedSec = (Date.now() - lastTurnStart) / 1000;
-    if (elapsedSec > 0 && outputTokens > 0) {
-      lastOutputTokensPerSec = outputTokens / elapsedSec;
-    }
-
+    generationStart = null;
+    liveOutputTokensPerSec = null;
     installFooter(ctx);
     refreshCodexRateLimits(ctx);
   });
@@ -278,17 +327,23 @@ export default function (pi: ExtensionAPI) {
 
   function installFooter(ctx: ExtensionContext) {
     ctx.ui.setFooter((tui, theme, footerData) => {
-      const unsub = footerData.onBranchChange(() => tui.requestRender());
+      const renderFooter = () => tui.requestRender();
+      requestFooterRender = renderFooter;
+      const unsub = footerData.onBranchChange(renderFooter);
 
       return {
-        dispose: unsub,
+        dispose() {
+          unsub();
+          if (requestFooterRender === renderFooter) requestFooterRender = null;
+        },
         invalidate() {},
         render(width: number): string[] {
           // ── line 1: cwd, git branch, session name, token speed ─────
-          const speedText = lastOutputTokensPerSec !== null && lastOutputTokensPerSec > 0
-            ? lastOutputTokensPerSec >= 100
-              ? `${Math.round(lastOutputTokensPerSec)} tok/s`
-              : `${lastOutputTokensPerSec.toFixed(1)} tok/s`
+          const outputTokensPerSec = liveOutputTokensPerSec ?? lastOutputTokensPerSec;
+          const speedText = outputTokensPerSec !== null && outputTokensPerSec > 0
+            ? outputTokensPerSec >= 100
+              ? `${Math.round(outputTokensPerSec)} tok/s`
+              : `${outputTokensPerSec.toFixed(1)} tok/s`
             : "0 tok/s";
           const speedRight = speedText;
           const speedW = visibleWidth(speedRight);

@@ -54,7 +54,7 @@ Responsibilities:
 - Subscribe to session lifecycle events and install the footer on session start.
 - Track the active Git View URL from the extension event bus.
 - Fetch ChatGPT subscription windows through the Codex app-server protocol and track updates from the extension event bus.
-- Track turn timing and compute last output token speed.
+- Track assistant-message generation timing, estimate live output token speed during streaming, and finalize it from provider-reported output usage.
 - Read git diff shortstat from the current repository.
 - Render the two-line footer with width-aware truncation and padding.
 - Preserve compatibility with optional pi APIs by checking method availability before calling newer methods.
@@ -89,19 +89,20 @@ Responsibilities:
 
 1. `session_start` stores the extension context, refreshes the Git View URL, resets token speed, installs the footer, and starts a subscription-limit read for ChatGPT-authenticated OpenAI Codex models.
 2. The rate-limit client initializes Codex app-server, calls `account/rateLimits/read`, validates its windows, and emits `sz-codex-rate-limits:update`.
-3. `turn_start` records the current timestamp.
-4. `turn_end` computes output tokens per second and refreshes subscription limits after the completed response.
-5. Git View emits `sz-git-view:url`; the footer stores the URL and reinstalls itself so future renders hyperlink diff stats.
-6. Footer `render(width)` builds line 1 from left-aligned cwd/branch, a preferably centered session name clamped to avoid overlap, and right-aligned last speed or `0 tok/s`.
-7. Footer `render(width)` builds line 2 from cumulative usage, three-significant-figure cost, integer `ctx:<percent>%`, centered git plus subscription usage or `API`, model/provider/reasoning, and extension statuses.
-8. Width calculations use `visibleWidth()` and `truncateToWidth()` so wide Unicode and ANSI styling do not exceed terminal width.
+3. `message_start` records when the provider begins the assistant response, excluding request latency before the stream starts.
+4. `message_update` requests a footer render and shows a live average speed. It uses cumulative provider-reported output usage when available, otherwise pi's conservative token estimate for the partial assistant message.
+5. `message_end` replaces the live estimate with the authoritative provider-reported output-token total divided by assistant generation time; `turn_end` remains a compatibility fallback and refreshes subscription limits.
+6. Git View emits `sz-git-view:url`; the footer stores the URL and reinstalls itself so future renders hyperlink diff stats.
+7. Footer `render(width)` builds line 1 from left-aligned cwd/branch, a preferably centered session name clamped to avoid overlap, and right-aligned live/last speed or `0 tok/s`.
+8. Footer `render(width)` builds line 2 from cumulative usage, three-significant-figure cost, integer `ctx:<percent>%`, centered git plus subscription usage or `API`, model/provider/reasoning, and extension statuses.
+9. Width calculations use `visibleWidth()` and `truncateToWidth()` so wide Unicode and ANSI styling do not exceed terminal width.
 
 ## Error Handling
 
 - Git commands are wrapped in `try/catch`; non-git directories or command failures return no diff stats instead of failing footer rendering.
 - Missing optional APIs (`getEntries`, `getCwd`, `getSessionName`, `getContextUsage`, `getAvailableProviderCount`) fall back to older available values.
 - Empty or malformed Git View URL events are ignored; explicit `null` clears the URL.
-- Token speed is not overwritten by zero-token or invalid elapsed-time turns; missing speed renders as `0 tok/s`.
+- Token speed is not overwritten by zero-token or invalid elapsed-time turns; missing speed renders as `0 tok/s`. Live values are estimates until provider-reported usage arrives at message end.
 - Status text is sanitized before rendering to prevent multi-line footer output.
 - Codex protocol, timeout, and validation failures render both limit slots as `!`; a legitimately absent window renders as `—`.
 

@@ -154,7 +154,9 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
     Date.now = () => now;
     await pi.handlers.get('turn_start')({}, ctx);
     now = 2000;
-    await pi.handlers.get('turn_end')({}, ctx);
+    await pi.handlers.get('turn_end')({
+      message: { role: 'assistant', usage },
+    }, ctx);
 
     const footer = ctx.footerFactory(
       { requestRender() {} },
@@ -316,6 +318,83 @@ test('footer centers five-hour and weekly ChatGPT subscription usage', async () 
   }
 });
 
+test('footer updates token speed while the assistant response is streaming', async () => {
+  const originalCwd = process.cwd();
+  const originalNow = Date.now;
+  const repo = await createCleanRepo();
+  process.chdir(repo);
+
+  try {
+    const { default: installFooterExtension } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext();
+    let renderRequests = 0;
+
+    installFooterExtension(pi);
+    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+    const footer = ctx.footerFactory(
+      { requestRender() { renderRequests++; } },
+      plainTheme,
+      footerData,
+    );
+
+    let now = 1000;
+    Date.now = () => now;
+    await pi.handlers.get('message_start')({
+      message: { role: 'assistant', content: [], usage: { output: 0 } },
+    }, ctx);
+    now = 2000;
+    await pi.handlers.get('message_update')({
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a'.repeat(400) }],
+        usage: { output: 120 },
+      },
+      assistantMessageEvent: { type: 'text_delta', delta: 'a'.repeat(400) },
+    }, ctx);
+
+    assert.match(footer.render(100)[0], /120 tok\/s$/);
+    assert.ok(renderRequests >= 1);
+  } finally {
+    Date.now = originalNow;
+    process.chdir(originalCwd);
+  }
+});
+
+test('footer finalizes token speed from reported usage and generation time', async () => {
+  const originalCwd = process.cwd();
+  const originalNow = Date.now;
+  const repo = await createCleanRepo();
+  process.chdir(repo);
+
+  try {
+    const { default: installFooterExtension } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext();
+
+    installFooterExtension(pi);
+    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+
+    let now = 1000;
+    Date.now = () => now;
+    await pi.handlers.get('turn_start')({}, ctx);
+    now = 5000;
+    await pi.handlers.get('message_start')({
+      message: { role: 'assistant', content: [], usage: { output: 0 } },
+    }, ctx);
+    now = 7000;
+    await pi.handlers.get('message_end')({
+      message: { role: 'assistant', content: [], usage: { output: 300 } },
+    }, ctx);
+
+    assert.match(footer.render(100)[0], /150 tok\/s$/);
+  } finally {
+    Date.now = originalNow;
+    process.chdir(originalCwd);
+  }
+});
+
 test('footer keeps last token speed visible after footer refreshes', async () => {
   const originalCwd = process.cwd();
   const originalNow = Date.now;
@@ -342,7 +421,9 @@ test('footer keeps last token speed visible after footer refreshes', async () =>
     Date.now = () => now;
     await pi.handlers.get('turn_start')({}, ctx);
     now = 2000;
-    await pi.handlers.get('turn_end')({}, ctx);
+    await pi.handlers.get('turn_end')({
+      message: { role: 'assistant', usage },
+    }, ctx);
     await pi.handlers.get('tool_execution_end')({ toolName: 'bash' }, ctx);
 
     const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
