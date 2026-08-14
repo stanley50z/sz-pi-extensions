@@ -124,8 +124,11 @@ export default function fileSearchExtension(pi: ExtensionAPI) {
         };
       }
 
-      const formatted = await formatOutput(execution.stdout, "find-files");
-      const resultCount = execution.stdout.trimEnd().split(/\r?\n/).length;
+      // Keep tool output stable across platforms. fd emits native path
+      // separators on Windows, while Pi presents paths in shell-friendly form.
+      const output = execution.stdout.replaceAll("\\", "/");
+      const formatted = await formatOutput(output, "find-files");
+      const resultCount = output.trimEnd().split(/\r?\n/).length;
       return {
         content: [{ type: "text" as const, text: formatted.text }],
         details: {

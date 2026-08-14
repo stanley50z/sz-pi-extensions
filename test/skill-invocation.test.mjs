@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  KeybindingsManager,
+  TUI_KEYBINDINGS,
+  setKeybindings,
+} from '@earendil-works/pi-tui';
 
 const moduleUrl = new URL('../extensions/skill-invocation.ts', import.meta.url).href;
 
@@ -29,6 +34,44 @@ async function install() {
   return pi;
 }
 
+async function createEditorHarness() {
+  const pi = await install();
+  let editorFactory;
+  let providerFactory;
+  await pi.handlers.get('session_start')({}, {
+    ui: {
+      addAutocompleteProvider(factory) {
+        providerFactory = factory;
+      },
+      setEditorComponent(factory) {
+        editorFactory = factory;
+      },
+    },
+  });
+
+  assert.ok(editorFactory);
+  assert.ok(providerFactory);
+
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+  setKeybindings(keybindings);
+  const plain = (text) => text;
+  const editor = editorFactory({
+    terminal: { rows: 30 },
+    requestRender() {},
+  }, {
+    borderColor: plain,
+    selectList: {
+      selectedPrefix: plain,
+      selectedText: plain,
+      description: plain,
+      scrollInfo: plain,
+      noMatch: plain,
+    },
+  }, keybindings);
+
+  return { editor, providerFactory };
+}
+
 test("typing '$' offers loaded skills through autocomplete", async () => {
   const pi = await install();
   let providerFactory;
@@ -37,6 +80,7 @@ test("typing '$' offers loaded skills through autocomplete", async () => {
       addAutocompleteProvider(factory) {
         providerFactory = factory;
       },
+      setEditorComponent() {},
     },
   };
 
@@ -75,6 +119,7 @@ test("accepting a '$' completion inserts the skill name and a trailing space", a
       addAutocompleteProvider(factory) {
         providerFactory = factory;
       },
+      setEditorComponent() {},
     },
   });
   const current = {
@@ -102,6 +147,95 @@ test("accepting a '$' completion inserts the skill name and a trailing space", a
     cursorLine: 0,
     cursorCol: 5,
   });
+});
+
+test("Enter accepts a visible '/skill:' completion without submitting it", async () => {
+  const { editor, providerFactory } = await createEditorHarness();
+  const current = {
+    async getSuggestions(lines, cursorLine, cursorCol) {
+      const prefix = (lines[cursorLine] ?? '').slice(0, cursorCol);
+      if (!prefix.startsWith('/skill:')) return null;
+      return {
+        prefix,
+        items: [{ value: '/skill:tdd', label: '/skill:tdd' }],
+      };
+    },
+    applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      const currentLine = lines[cursorLine] ?? '';
+      const completedLines = [...lines];
+      completedLines[cursorLine] = `${currentLine.slice(0, cursorCol - prefix.length)}${item.value} ${currentLine.slice(cursorCol)}`;
+      return {
+        lines: completedLines,
+        cursorLine,
+        cursorCol: item.value.length + 1,
+      };
+    },
+  };
+  editor.setAutocompleteProvider(providerFactory(current));
+  editor.setText('/skill:td');
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+
+  editor.handleInput('\t');
+  for (let attempt = 0; attempt < 20 && !editor.isShowingAutocomplete(); attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(editor.isShowingAutocomplete(), true);
+
+  editor.handleInput('\r');
+
+  assert.equal(editor.getText(), '/skill:tdd ');
+  assert.deepEqual(submitted, []);
+});
+
+test("Enter completes a '$skill' token without submitting it", async () => {
+  const { editor, providerFactory } = await createEditorHarness();
+  const current = {
+    async getSuggestions() {
+      return null;
+    },
+    applyCompletion() {
+      throw new Error('not used');
+    },
+    shouldTriggerFileCompletion() {
+      return true;
+    },
+  };
+  editor.setAutocompleteProvider(providerFactory(current));
+  editor.setText('$td');
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+
+  editor.handleInput('\r');
+  for (let attempt = 0; attempt < 20 && editor.getText() === '$td'; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.equal(editor.getText(), '$tdd ');
+  assert.deepEqual(submitted, []);
+});
+
+test("Enter still submits an unknown '$name' as ordinary prompt text", async () => {
+  const { editor, providerFactory } = await createEditorHarness();
+  const current = {
+    async getSuggestions() {
+      return null;
+    },
+    applyCompletion() {
+      throw new Error('not used');
+    },
+    shouldTriggerFileCompletion() {
+      return true;
+    },
+  };
+  editor.setAutocompleteProvider(providerFactory(current));
+  editor.setText('$unknown');
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+
+  editor.handleInput('\r');
+
+  assert.deepEqual(submitted, ['$unknown']);
 });
 
 test("submitting '$skill-name' rewrites to Pi's native skill command", async () => {

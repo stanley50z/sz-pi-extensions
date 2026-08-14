@@ -1,9 +1,53 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  CustomEditor,
+  type ExtensionAPI,
+  type KeybindingsManager,
+} from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteItem,
   type AutocompleteProvider,
+  type EditorTheme,
   fuzzyFilter,
+  type TUI,
 } from "@earendil-works/pi-tui";
+
+class SkillAutocompleteEditor extends CustomEditor {
+  private readonly skillKeybindings: KeybindingsManager;
+  private readonly hasSkillCompletions: (query: string) => boolean;
+
+  constructor(
+    tui: TUI,
+    theme: EditorTheme,
+    keybindings: KeybindingsManager,
+    hasSkillCompletions: (query: string) => boolean,
+  ) {
+    super(tui, theme, keybindings);
+    this.skillKeybindings = keybindings;
+    this.hasSkillCompletions = hasSkillCompletions;
+  }
+
+  override handleInput(data: string): void {
+    const { line, col } = this.getCursor();
+    const textBeforeCursor = (this.getLines()[line] ?? "").slice(0, col);
+    const slashQuery = line === 0
+      ? textBeforeCursor.match(/^\s*\/skill:([a-z0-9-]*)$/)?.[1]
+      : undefined;
+    const dollarQuery = textBeforeCursor.match(/(?:^|[ \t])\$([a-z0-9-]*)$/)?.[1];
+    const hasCompletion = [slashQuery, dollarQuery].some(
+      (query) => query !== undefined && this.hasSkillCompletions(query),
+    );
+
+    if (
+      hasCompletion
+      && this.skillKeybindings.matches(data, "tui.input.submit")
+    ) {
+      super.handleInput("\t");
+      return;
+    }
+
+    super.handleInput(data);
+  }
+}
 
 function extractSkillToken(lines: string[], cursorLine: number, cursorCol: number): string | undefined {
   const textBeforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
@@ -93,6 +137,14 @@ function firstLoadedSkillMention(pi: ExtensionAPI, text: string): SkillMention |
 export default function skillInvocationExtension(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.addAutocompleteProvider((current) => createSkillAutocompleteProvider(pi, current));
+    ctx.ui.setEditorComponent(
+      (tui, theme, keybindings) => new SkillAutocompleteEditor(
+        tui,
+        theme,
+        keybindings,
+        (query) => skillItems(pi, query).length > 0,
+      ),
+    );
   });
 
   pi.on("input", (event) => {

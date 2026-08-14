@@ -65,7 +65,7 @@ Git View and the footer's clickable change count activate only when the current 
 
 ## Manual skill invocation
 
-Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill-name` with any additional instructions. A loaded `$skill-name` mention at the start or within a prompt invokes the same Pi skill expansion as `/skill:skill-name`; unknown `$name` text is left unchanged.
+Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill-name` with any additional instructions. While a `$skill` or `/skill:` completion is available, Enter accepts it without submitting, just like Tab; press Enter again to send the completed prompt. A loaded `$skill-name` mention at the start or within a prompt invokes the same Pi skill expansion as `/skill:skill-name`; unknown `$name` text is left unchanged.
 
 ## Skill suites
 
