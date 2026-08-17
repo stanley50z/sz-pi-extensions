@@ -3,7 +3,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 const WIDGET_KEY = "sz-turn-elapsed";
 const TICK_MS = 1_000;
@@ -62,8 +62,7 @@ export default function turnElapsedExtension(pi: ExtensionAPI) {
             ? `Agent turn · ${formatElapsed(Date.now() - startedAt)}`
             : `Last turn · ${formatElapsed(lastElapsedMs!)}`;
           const visibleLabel = truncateToWidth(label, width);
-          const leftPadding = " ".repeat(Math.max(0, width - visibleWidth(visibleLabel)));
-          return [leftPadding + theme.fg("dim", visibleLabel)];
+          return [theme.fg("dim", visibleLabel)];
         },
       };
     }, { placement: "aboveEditor" });

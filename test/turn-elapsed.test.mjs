@@ -65,7 +65,7 @@ test('shows live elapsed time since the latest user message above the editor', a
     }, ctx);
     now = 66_000;
 
-    assert.match(stripVTControlCharacters(widget.render(80)[0]), /Agent turn · 1m 05s$/);
+    assert.equal(stripVTControlCharacters(widget.render(80)[0]), 'Agent turn · 1m 05s');
 
     await pi.handlers.get('session_shutdown')({ reason: 'quit' }, ctx);
   } finally {
