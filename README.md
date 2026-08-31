@@ -18,6 +18,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
+- **Windows desktop notifications and terminal focus** when Pi needs input or fully finishes a response
 - **Daily background Pi self-updates** with a restart notification when a new version installs
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
