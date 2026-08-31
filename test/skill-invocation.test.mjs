@@ -72,6 +72,39 @@ async function createEditorHarness() {
   return { editor, providerFactory };
 }
 
+test('preserves an editor wrapper installed by another extension', async () => {
+  const pi = await install();
+  const handledInputs = [];
+  let editorFactory;
+  const previousEditor = {
+    getText: () => '/name',
+    setText() {},
+    handleInput(data) {
+      handledInputs.push(data);
+    },
+    render: () => [],
+    invalidate() {},
+  };
+
+  await pi.handlers.get('session_start')({}, {
+    ui: {
+      addAutocompleteProvider() {},
+      getEditorComponent() {
+        return () => previousEditor;
+      },
+      setEditorComponent(factory) {
+        editorFactory = factory;
+      },
+    },
+  });
+
+  const editor = editorFactory({}, {}, new KeybindingsManager(TUI_KEYBINDINGS));
+  editor.handleInput('\r');
+
+  assert.equal(editor, previousEditor);
+  assert.deepEqual(handledInputs, ['\r']);
+});
+
 test("typing '$' offers loaded skills through autocomplete", async () => {
   const pi = await install();
   let providerFactory;

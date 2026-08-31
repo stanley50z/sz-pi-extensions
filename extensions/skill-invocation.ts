@@ -6,47 +6,51 @@ import {
 import {
   type AutocompleteItem,
   type AutocompleteProvider,
-  type EditorTheme,
+  type EditorComponent,
   fuzzyFilter,
-  type TUI,
 } from "@earendil-works/pi-tui";
 
-class SkillAutocompleteEditor extends CustomEditor {
-  private readonly skillKeybindings: KeybindingsManager;
-  private readonly hasSkillCompletions: (query: string) => boolean;
+interface CursorEditor extends EditorComponent {
+  getCursor(): { line: number; col: number };
+  getLines(): string[];
+}
 
-  constructor(
-    tui: TUI,
-    theme: EditorTheme,
-    keybindings: KeybindingsManager,
-    hasSkillCompletions: (query: string) => boolean,
-  ) {
-    super(tui, theme, keybindings);
-    this.skillKeybindings = keybindings;
-    this.hasSkillCompletions = hasSkillCompletions;
-  }
+function isCursorEditor(editor: EditorComponent): editor is CursorEditor {
+  return "getCursor" in editor
+    && typeof editor.getCursor === "function"
+    && "getLines" in editor
+    && typeof editor.getLines === "function";
+}
 
-  override handleInput(data: string): void {
-    const { line, col } = this.getCursor();
-    const textBeforeCursor = (this.getLines()[line] ?? "").slice(0, col);
-    const slashQuery = line === 0
-      ? textBeforeCursor.match(/^\s*\/skill:([a-z0-9-]*)$/)?.[1]
-      : undefined;
-    const dollarQuery = textBeforeCursor.match(/(?:^|[ \t])\$([a-z0-9-]*)$/)?.[1];
-    const hasCompletion = [slashQuery, dollarQuery].some(
-      (query) => query !== undefined && this.hasSkillCompletions(query),
-    );
+function addSkillSubmitCompletion(
+  editor: EditorComponent,
+  keybindings: KeybindingsManager,
+  hasSkillCompletions: (query: string) => boolean,
+): EditorComponent {
+  const handleInput = editor.handleInput.bind(editor);
 
-    if (
-      hasCompletion
-      && this.skillKeybindings.matches(data, "tui.input.submit")
-    ) {
-      super.handleInput("\t");
-      return;
+  editor.handleInput = (data) => {
+    if (isCursorEditor(editor)) {
+      const { line, col } = editor.getCursor();
+      const textBeforeCursor = (editor.getLines()[line] ?? "").slice(0, col);
+      const slashQuery = line === 0
+        ? textBeforeCursor.match(/^\s*\/skill:([a-z0-9-]*)$/)?.[1]
+        : undefined;
+      const dollarQuery = textBeforeCursor.match(/(?:^|[ \t])\$([a-z0-9-]*)$/)?.[1];
+      const hasCompletion = [slashQuery, dollarQuery].some(
+        (query) => query !== undefined && hasSkillCompletions(query),
+      );
+
+      if (hasCompletion && keybindings.matches(data, "tui.input.submit")) {
+        handleInput("\t");
+        return;
+      }
     }
 
-    super.handleInput(data);
-  }
+    handleInput(data);
+  };
+
+  return editor;
 }
 
 function extractSkillToken(lines: string[], cursorLine: number, cursorCol: number): string | undefined {
@@ -137,14 +141,16 @@ function firstLoadedSkillMention(pi: ExtensionAPI, text: string): SkillMention |
 export default function skillInvocationExtension(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.addAutocompleteProvider((current) => createSkillAutocompleteProvider(pi, current));
-    ctx.ui.setEditorComponent(
-      (tui, theme, keybindings) => new SkillAutocompleteEditor(
-        tui,
-        theme,
+    const previousFactory = ctx.ui.getEditorComponent?.();
+    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+      const editor = previousFactory?.(tui, theme, keybindings)
+        ?? new CustomEditor(tui, theme, keybindings);
+      return addSkillSubmitCompletion(
+        editor,
         keybindings,
         (query) => skillItems(pi, query).length > 0,
-      ),
-    );
+      );
+    });
   });
 
   pi.on("input", (event) => {

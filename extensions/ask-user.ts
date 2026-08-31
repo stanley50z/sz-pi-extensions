@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  Input,
+  Editor,
+  type EditorTheme,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -123,7 +124,17 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
         const answer = await ctx.ui.custom<TuiAnswer>((tui, theme, keybindings, done) => {
           const customIndex = params.options.length;
-          const input = new Input();
+          const editorTheme: EditorTheme = {
+            borderColor: (text) => theme.fg("accent", text),
+            selectList: {
+              selectedPrefix: (text) => theme.fg("accent", text),
+              selectedText: (text) => theme.fg("accent", text),
+              description: (text) => theme.fg("muted", text),
+              scrollInfo: (text) => theme.fg("dim", text),
+              noMatch: (text) => theme.fg("warning", text),
+            },
+          };
+          const editor = new Editor(tui, editorTheme);
           let optionIndex = 0;
           let focused = false;
           let finished = false;
@@ -140,17 +151,16 @@ export default function askUserExtension(pi: ExtensionAPI) {
           signal?.addEventListener("abort", cancel, { once: true });
 
           const refresh = () => {
-            input.focused = focused && optionIndex === customIndex;
+            editor.focused = focused && optionIndex === customIndex;
             cachedWidth = undefined;
             cachedLines = undefined;
             tui.requestRender();
           };
 
-          input.onSubmit = (value) => {
+          editor.onSubmit = (value) => {
             const trimmed = value.trim();
             if (trimmed) finish({ kind: "custom", answer: trimmed });
           };
-          input.onEscape = cancel;
 
           const handleInput = (data: string) => {
             if (keybindings.matches(data, "tui.select.cancel")) {
@@ -180,7 +190,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
               }
             }
             if (optionIndex === customIndex) {
-              input.handleInput(data);
+              editor.handleInput(data);
               refresh();
               return;
             }
@@ -225,7 +235,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
             if (customSelected) {
               const indentWidth = Math.min(5, Math.max(0, renderWidth - 3));
               const indent = " ".repeat(indentWidth);
-              for (const line of input.render(renderWidth - indentWidth)) {
+              for (const line of editor.render(renderWidth - indentWidth)) {
                 lines.push(`${indent}${line}`);
               }
             }
@@ -252,12 +262,12 @@ export default function askUserExtension(pi: ExtensionAPI) {
             },
             set focused(value: boolean) {
               focused = value;
-              input.focused = value && optionIndex === customIndex;
+              editor.focused = value && optionIndex === customIndex;
             },
             render,
             handleInput,
             invalidate() {
-              input.invalidate();
+              editor.invalidate();
               cachedWidth = undefined;
               cachedLines = undefined;
             },

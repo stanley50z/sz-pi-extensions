@@ -3,8 +3,9 @@ import test from "node:test";
 import { getKeybindings } from "@earendil-works/pi-tui";
 import askUserExtension from "../extensions/ask-user.ts";
 
-function setup({ choice, customAnswer, hasUI = true, mode, keys = [] } = {}) {
+function setup({ choice, customAnswer, hasUI = true, mode, keys = [], renderWidth = 80 } = {}) {
   let tool;
+  let renderedLines = [];
   const selectCalls = [];
   const inputCalls = [];
   const customCalls = [];
@@ -21,18 +22,26 @@ function setup({ choice, customAnswer, hasUI = true, mode, keys = [] } = {}) {
         let answer;
         const identity = (_color, text) => text;
         const component = factory(
-          { requestRender() {} },
+          { terminal: { rows: 40 }, requestRender() {} },
           { fg: identity, bg: identity, bold: (text) => text },
           getKeybindings(),
           (value) => { answer = value; },
         );
         component.focused = true;
         for (const key of keys) component.handleInput(key);
+        renderedLines = component.render(renderWidth);
         return answer;
       },
     },
   };
-  return { get tool() { return tool; }, ctx, selectCalls, inputCalls, customCalls };
+  return {
+    get tool() { return tool; },
+    get renderedLines() { return renderedLines; },
+    ctx,
+    selectCalls,
+    inputCalls,
+    customCalls,
+  };
 }
 
 const params = {
@@ -103,6 +112,22 @@ test("ask_user accepts typing immediately when the in-place custom answer is hig
     answer: "Use the team preset",
     selectedIndex: undefined,
   });
+});
+
+test("ask_user wraps the complete in-place custom answer", async () => {
+  const answer = "alpha beta gamma delta epsilon";
+  const state = setup({
+    keys: ["\x1b[B", "\x1b[B", ...answer],
+    renderWidth: 24,
+  });
+
+  await state.tool.execute("call-wrap", params, undefined, undefined, state.ctx);
+
+  const firstWordLine = state.renderedLines.findIndex((line) => line.includes("alpha"));
+  const lastWordLine = state.renderedLines.findIndex((line) => line.includes("epsilon"));
+  assert.notEqual(firstWordLine, -1);
+  assert.notEqual(lastWordLine, -1);
+  assert.notEqual(firstWordLine, lastWordLine);
 });
 
 test("ask_user reports when interactive UI is unavailable", async () => {

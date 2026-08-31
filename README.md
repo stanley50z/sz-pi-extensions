@@ -18,6 +18,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
+- **Daily background Pi self-updates** with a restart notification when a new version installs
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
@@ -94,6 +95,10 @@ Selected suite skills are re-added dynamically. Each `skill-suites.json` suite h
 The package merges its preferred keybindings into `~/.pi/agent/keybindings.json` whenever Pi loads it. Existing unrelated user bindings are preserved. Currently it adds Ctrl+Backspace to `tui.editor.deleteWordBackward`, alongside Pi's Ctrl+W and Alt+Backspace defaults.
 
 Because this preference lives in the tracked extension, installing the package on another machine recreates it without separately syncing `keybindings.json`.
+
+## Pi autoupdate
+
+On session startup, the package runs `pi update --self` in the background when it has not checked during the previous 24 hours. Startup is not blocked, already-current versions stay silent, and a successful update displays a notification asking you to restart Pi. Failures are reported without stopping the session, and the next session retries instead of waiting 24 hours. Autoupdate honors `PI_OFFLINE=1` (as well as `true` or `yes`) and stores its last-check time in `~/.pi/agent/pi-autoupdate.json` or the configured `PI_CODING_AGENT_DIR`.
 
 ## Fast mode
 

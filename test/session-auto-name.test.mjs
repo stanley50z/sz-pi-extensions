@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { KeybindingsManager, TUI_KEYBINDINGS } from '@earendil-works/pi-tui';
 
 const moduleUrl = new URL('../extensions/session-auto-name.ts', import.meta.url).href;
 
@@ -61,7 +62,9 @@ function createFakePi(existingName) {
 function createFakeContext(branch, overrides = {}) {
   const model = overrides.model ?? { provider: 'openai', id: 'gpt-test', reasoning: true };
   const notifications = [];
+  let editorFactory;
   return {
+    mode: 'tui',
     model,
     signal: overrides.signal,
     sessionManager: {
@@ -76,9 +79,18 @@ function createFakeContext(branch, overrides = {}) {
       },
     },
     notifications,
+    get editorFactory() {
+      return editorFactory;
+    },
     ui: {
       notify(message, type) {
         notifications.push({ message, type });
+      },
+      getEditorComponent() {
+        return undefined;
+      },
+      setEditorComponent(factory) {
+        editorFactory = factory;
       },
       setStatus() {},
     },
@@ -136,28 +148,89 @@ test('persists a sanitized session name without adding a conversation turn', asy
   assert.equal(pi.sentMessages.length, 0);
 });
 
-test('registers /autoname to generate a name for the current session on demand', async () => {
+test('runs manual auto-naming when /name has no argument', async () => {
   const { createSessionAutoNameExtension } = await freshModule();
-  const calls = [];
-  const pi = createFakePi();
+  const pi = createFakePi('Old Session Name');
   const ctx = createFakeContext([
     messageEntry('user', 'Please inspect this repository.'),
     messageEntry('assistant', 'I inspected the repository.', { stopReason: 'stop' }),
   ]);
 
   createSessionAutoNameExtension({
-    complete: async (...args) => {
-      calls.push(args);
-      return { stopReason: 'stop', content: [{ type: 'text', text: 'On Demand Session Naming' }] };
+    complete: async () => ({
+      stopReason: 'stop',
+      content: [{ type: 'text', text: 'Generated Session Name' }],
+    }),
+  })(pi);
+
+  await pi.handlers.get('session_start')({ type: 'session_start', reason: 'startup' }, ctx);
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+  const plain = (text) => text;
+  const editor = ctx.editorFactory({
+    terminal: { rows: 30 },
+    requestRender() {},
+  }, {
+    borderColor: plain,
+    selectList: {
+      selectedPrefix: plain,
+      selectedText: plain,
+      description: plain,
+      scrollInfo: plain,
+      noMatch: plain,
+    },
+  }, keybindings);
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+  editor.setText('/name');
+
+  editor.handleInput('\r');
+  for (let attempt = 0; attempt < 20 && pi.setNames.length === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.equal(pi.commands.has('autoname'), false);
+  assert.deepEqual(submitted, []);
+  assert.deepEqual(pi.setNames, ['Generated Session Name']);
+  assert.deepEqual(ctx.notifications, [
+    { message: 'Session name set: Generated Session Name', type: 'info' },
+  ]);
+});
+
+test("/name with an argument remains on Pi's built-in naming path", async () => {
+  const { createSessionAutoNameExtension } = await freshModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext([]);
+
+  createSessionAutoNameExtension({
+    complete: async () => {
+      throw new Error('Auto-naming should not run');
     },
   })(pi);
 
-  await pi.commands.get('autoname').handler('', ctx);
+  await pi.handlers.get('session_start')({ type: 'session_start', reason: 'startup' }, ctx);
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+  const plain = (text) => text;
+  const editor = ctx.editorFactory({
+    terminal: { rows: 30 },
+    requestRender() {},
+  }, {
+    borderColor: plain,
+    selectList: {
+      selectedPrefix: plain,
+      selectedText: plain,
+      description: plain,
+      scrollInfo: plain,
+      noMatch: plain,
+    },
+  }, keybindings);
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+  editor.setText('/name Chosen Name');
 
-  assert.equal(calls.length, 1);
-  assert.deepEqual(pi.setNames, ['On Demand Session Naming']);
-  assert.equal(pi.sentUserMessages.length, 0);
-  assert.equal(pi.sentMessages.length, 0);
+  editor.handleInput('\r');
+
+  assert.deepEqual(submitted, ['/name Chosen Name']);
+  assert.deepEqual(pi.setNames, []);
 });
 
 test('skips automatic naming when the session already has an explicit name', async () => {

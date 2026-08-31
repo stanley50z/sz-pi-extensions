@@ -1,5 +1,9 @@
 import { complete, type UserMessage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  CustomEditor,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 const SYSTEM_PROMPT = `You generate concise session titles for coding assistant conversations.
 
@@ -140,11 +144,29 @@ export function createSessionAutoNameExtension(deps: SessionAutoNameDependencies
       }
     }
 
-    pi.registerCommand("autoname", {
-      description: "Generate a session name with the current model",
-      handler: async (_args, ctx) => {
-        await runNaming(ctx, { skipExisting: false, notify: true });
-      },
+    pi.on("session_start", (_event, ctx) => {
+      if (ctx.mode !== "tui") return;
+
+      const previousFactory = ctx.ui.getEditorComponent();
+      ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+        const editor = previousFactory?.(tui, theme, keybindings)
+          ?? new CustomEditor(tui, theme, keybindings);
+        const handleInput = editor.handleInput.bind(editor);
+
+        editor.handleInput = (data) => {
+          if (keybindings.matches(data, "tui.input.submit") && editor.getText().trim() === "/name") {
+            editor.setText("");
+            void runNaming(ctx, { skipExisting: false, notify: true }).catch((error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error);
+              ctx.ui.notify(`Could not generate a session name: ${message}`, "error");
+            });
+            return;
+          }
+          handleInput(data);
+        };
+
+        return editor;
+      });
     });
 
     pi.on("agent_end", async (_event, ctx) => {
