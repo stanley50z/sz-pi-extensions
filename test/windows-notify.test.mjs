@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWindowsNotifyExtension } from "../extensions/windows-notify.ts";
 
-function setup({ platform = "win32", targets = [{ windowHandle: 101, tabRuntimeId: [42, 7] }] } = {}) {
+function setup({
+  platform = "win32",
+  targets = [{ windowHandle: 101, tabRuntimeId: [42, 7] }],
+  terminalState = "background",
+} = {}) {
   const handlers = new Map();
   const notifications = [];
   const uiNotifications = [];
+  const capturedTitles = [];
+  const terminalTitles = [];
+  const attentionSignals = [];
+  const activationWatchers = [];
   let captureIndex = 0;
   const pi = {
     getSessionName: () => "Notification work",
@@ -15,11 +23,23 @@ function setup({ platform = "win32", targets = [{ windowHandle: 101, tabRuntimeI
   };
   const extension = createWindowsNotifyExtension({
     platform,
-    async captureTerminalWindow() {
+    createTabMarker: () => "Pi notification target test",
+    async captureTerminalWindow(title) {
+      capturedTitles.push(title);
       return targets[Math.min(captureIndex++, targets.length - 1)];
     },
-    notifyAndFocus(notification) {
-      notifications.push(notification);
+    async getTerminalState() {
+      return terminalState;
+    },
+    showNotification(notification, options) {
+      notifications.push({ ...notification, ...options });
+    },
+    setTabAttention(active) {
+      attentionSignals.push(active);
+    },
+    watchTabActivation(target, onActive) {
+      activationWatchers.push({ target, onActive });
+      return () => {};
     },
   });
   extension(pi);
@@ -29,13 +49,34 @@ function setup({ platform = "win32", targets = [{ windowHandle: 101, tabRuntimeI
       notify(message, type) {
         uiNotifications.push({ message, type });
       },
+      setTitle(title) {
+        terminalTitles.push(title);
+      },
     },
   };
-  return { handlers, notifications, uiNotifications, ctx };
+  return {
+    handlers,
+    notifications,
+    uiNotifications,
+    capturedTitles,
+    terminalTitles,
+    attentionSignals,
+    activationWatchers,
+    ctx,
+  };
 }
 
-test("notifies and focuses the session terminal only after the agent fully settles", async () => {
+test("captures the calling Pi tab even when another terminal tab is selected", async () => {
   const state = setup();
+
+  await state.handlers.get("session_start")({}, state.ctx);
+
+  assert.deepEqual(state.capturedTitles, ["Pi notification target test"]);
+  assert.deepEqual(state.terminalTitles, ["Pi notification target test", "Pi - Notification work"]);
+});
+
+test("a completed background tab posts a persistent notification without taking focus", async () => {
+  const state = setup({ terminalState: "background" });
   await state.handlers.get("session_start")({}, state.ctx);
   await state.handlers.get("agent_start")({}, state.ctx);
 
@@ -47,10 +88,54 @@ test("notifies and focuses the session terminal only after the agent fully settl
     body: "Response finished",
     windowHandle: 101,
     tabRuntimeId: [42, 7],
+    persistent: true,
+    activateTarget: true,
   }]);
+  assert.deepEqual(state.attentionSignals, []);
 });
 
-test("notifies and focuses immediately when Pi asks for user input", async () => {
+test("a completed inactive tab uses a transient toast and a Terminal attention ring", async () => {
+  const state = setup({ terminalState: "foreground-inactive" });
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+
+  await state.handlers.get("agent_settled")({}, state.ctx);
+
+  assert.deepEqual(state.notifications, [{
+    title: "Pi - Notification work",
+    body: "Response finished",
+    windowHandle: 101,
+    tabRuntimeId: [42, 7],
+    persistent: false,
+    activateTarget: true,
+  }]);
+  assert.deepEqual(state.attentionSignals, [true]);
+  assert.equal(state.activationWatchers.length, 1);
+  assert.deepEqual(state.activationWatchers[0].target, { windowHandle: 101, tabRuntimeId: [42, 7] });
+
+  state.activationWatchers[0].onActive();
+  assert.deepEqual(state.attentionSignals, [true, false]);
+});
+
+test("a completed active tab uses a normal transient notification", async () => {
+  const state = setup({ terminalState: "foreground-active" });
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+
+  await state.handlers.get("agent_settled")({}, state.ctx);
+
+  assert.deepEqual(state.notifications, [{
+    title: "Pi - Notification work",
+    body: "Response finished",
+    windowHandle: 101,
+    tabRuntimeId: [42, 7],
+    persistent: false,
+    activateTarget: false,
+  }]);
+  assert.deepEqual(state.attentionSignals, []);
+});
+
+test("input prompts use the same state-aware notification behavior", async () => {
   const state = setup();
   await state.handlers.get("session_start")({}, state.ctx);
 
@@ -64,6 +149,8 @@ test("notifies and focuses immediately when Pi asks for user input", async () =>
     body: "Input needed: Choose a database",
     windowHandle: 101,
     tabRuntimeId: [42, 7],
+    persistent: true,
+    activateTarget: true,
   }]);
 });
 
