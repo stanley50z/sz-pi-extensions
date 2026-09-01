@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWindowsNotifyExtension } from "../extensions/windows-notify.ts";
 
-function setup({ platform = "win32", handles = [101] } = {}) {
+function setup({ platform = "win32", targets = [{ windowHandle: 101, tabRuntimeId: [42, 7] }] } = {}) {
   const handlers = new Map();
   const notifications = [];
   const uiNotifications = [];
@@ -16,7 +16,7 @@ function setup({ platform = "win32", handles = [101] } = {}) {
   const extension = createWindowsNotifyExtension({
     platform,
     async captureTerminalWindow() {
-      return handles[Math.min(captureIndex++, handles.length - 1)];
+      return targets[Math.min(captureIndex++, targets.length - 1)];
     },
     notifyAndFocus(notification) {
       notifications.push(notification);
@@ -46,6 +46,7 @@ test("notifies and focuses the session terminal only after the agent fully settl
     title: "Pi - Notification work",
     body: "Response finished",
     windowHandle: 101,
+    tabRuntimeId: [42, 7],
   }]);
 });
 
@@ -62,6 +63,7 @@ test("notifies and focuses immediately when Pi asks for user input", async () =>
     title: "Pi - Notification work",
     body: "Input needed: Choose a database",
     windowHandle: 101,
+    tabRuntimeId: [42, 7],
   }]);
 });
 
