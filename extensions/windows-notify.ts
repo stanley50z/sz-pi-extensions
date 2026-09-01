@@ -536,6 +536,7 @@ export function createWindowsNotifyExtension(
     });
 
     pi.on("ui_prompt_start", async (event, ctx) => {
+      if (!agentRunning) return;
       const prompt = event.title?.trim();
       await dispatch(ctx, prompt ? `Input needed: ${prompt}` : "Input needed");
     });

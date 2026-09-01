@@ -135,9 +135,10 @@ test("a completed active tab uses a normal transient notification", async () => 
   assert.deepEqual(state.attentionSignals, []);
 });
 
-test("input prompts use the same state-aware notification behavior", async () => {
+test("agent input prompts use the same state-aware notification behavior", async () => {
   const state = setup();
   await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
 
   await state.handlers.get("ui_prompt_start")({
     kind: "select",
@@ -152,6 +153,18 @@ test("input prompts use the same state-aware notification behavior", async () =>
     persistent: true,
     activateTarget: true,
   }]);
+});
+
+test("idle UI such as the /new selector does not trigger a notification", async () => {
+  const state = setup();
+  await state.handlers.get("session_start")({}, state.ctx);
+
+  await state.handlers.get("ui_prompt_start")({
+    kind: "select",
+    title: "Select working directory",
+  }, state.ctx);
+
+  assert.deepEqual(state.notifications, []);
 });
 
 test("does not install terminal notification hooks outside Windows", () => {
