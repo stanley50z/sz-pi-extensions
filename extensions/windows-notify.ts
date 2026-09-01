@@ -397,6 +397,14 @@ function watchTabActivation(
   const script = `
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class PiTerminalActivation {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+}
+"@
 $window = [IntPtr]::new(${target.windowHandle})
 $targetRuntimeId = @(${tabRuntimeId})
 $condition = New-Object System.Windows.Automation.PropertyCondition(
@@ -414,7 +422,7 @@ while ($true) {
     if (-not $tab.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selection)) {
       throw "The Pi terminal tab cannot be inspected"
     }
-    if ($selection.Current.IsSelected) { exit 0 }
+    if ($selection.Current.IsSelected -and [PiTerminalActivation]::GetForegroundWindow() -eq $window) { exit 0 }
     break
   }
   if (-not $found) { throw "The Pi terminal tab no longer exists" }
@@ -468,7 +476,7 @@ export function createWindowsNotifyExtension(
 
     let terminalTarget: TerminalTarget | undefined;
     let cancelNotification: (() => void) | undefined;
-    let cancelAttentionWatch: (() => void) | undefined;
+    let cancelActivationWatch: (() => void) | undefined;
     let attentionActive = false;
     let agentRunning = false;
     let reportedError = false;
@@ -487,15 +495,9 @@ export function createWindowsNotifyExtension(
         if (state === "foreground-inactive" && !attentionActive) {
           attentionActive = true;
           deps.setTabAttention(true);
-          cancelAttentionWatch?.();
-          cancelAttentionWatch = deps.watchTabActivation(terminalTarget, () => {
-            attentionActive = false;
-            cancelAttentionWatch = undefined;
-            deps.setTabAttention(false);
-          }, (error) => reportError(ctx, error));
         }
         cancelNotification?.();
-        cancelNotification = deps.showNotification({
+        const dismissNotification = deps.showNotification({
           title: `Pi - ${pi.getSessionName()?.trim() || "Untitled session"}`,
           body,
           ...terminalTarget,
@@ -503,6 +505,23 @@ export function createWindowsNotifyExtension(
           persistent: state === "background",
           activateTarget: state !== "foreground-active",
         }, (error) => reportError(ctx, error));
+        cancelNotification = dismissNotification;
+
+        cancelActivationWatch?.();
+        cancelActivationWatch = undefined;
+        if (state !== "foreground-active") {
+          cancelActivationWatch = deps.watchTabActivation(terminalTarget, () => {
+            cancelActivationWatch = undefined;
+            if (state === "background") {
+              dismissNotification();
+              if (cancelNotification === dismissNotification) cancelNotification = undefined;
+            }
+            if (attentionActive) {
+              attentionActive = false;
+              deps.setTabAttention(false);
+            }
+          }, (error) => reportError(ctx, error));
+        }
       } catch (error) {
         reportError(ctx, error);
       }
@@ -544,8 +563,8 @@ export function createWindowsNotifyExtension(
     pi.on("session_shutdown", () => {
       cancelNotification?.();
       cancelNotification = undefined;
-      cancelAttentionWatch?.();
-      cancelAttentionWatch = undefined;
+      cancelActivationWatch?.();
+      cancelActivationWatch = undefined;
       if (attentionActive) deps.setTabAttention(false);
       attentionActive = false;
       terminalTarget = undefined;

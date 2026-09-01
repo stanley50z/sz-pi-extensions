@@ -9,6 +9,7 @@ function setup({
 } = {}) {
   const handlers = new Map();
   const notifications = [];
+  const dismissedNotifications = [];
   const uiNotifications = [];
   const capturedTitles = [];
   const terminalTitles = [];
@@ -32,7 +33,9 @@ function setup({
       return terminalState;
     },
     showNotification(notification, options) {
-      notifications.push({ ...notification, ...options });
+      const shown = { ...notification, ...options };
+      notifications.push(shown);
+      return () => dismissedNotifications.push(shown);
     },
     setTabAttention(active) {
       attentionSignals.push(active);
@@ -57,6 +60,7 @@ function setup({
   return {
     handlers,
     notifications,
+    dismissedNotifications,
     uiNotifications,
     capturedTitles,
     terminalTitles,
@@ -92,6 +96,10 @@ test("a completed background tab posts a persistent notification without taking 
     activateTarget: true,
   }]);
   assert.deepEqual(state.attentionSignals, []);
+  assert.equal(state.activationWatchers.length, 1);
+
+  state.activationWatchers[0].onActive();
+  assert.deepEqual(state.dismissedNotifications, [state.notifications[0]]);
 });
 
 test("a completed inactive tab uses a transient toast and a Terminal attention ring", async () => {
