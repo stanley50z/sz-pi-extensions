@@ -21,6 +21,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings
 - **Daily background Pi self-updates** with a restart notification when a new version installs
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
+- **Cross-instance runtime reloads** through `/reload-all`
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
 - **Codex-style manual skill invocation** through `$skill-name` with `$` autocomplete
@@ -62,6 +63,8 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 `ask_user` presents two to five choices and always includes a free-form answer; in the TUI, highlight “Type my own answer” and begin typing immediately. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
 
 `/new` opens a working-directory selector before creating the session. The active session cwd is selected by default; other existing cwds found in session history are deduplicated and ordered by most recent activity.
+
+`/reload-all` reloads extensions, skills, prompts, themes, and context files in every running Pi instance that has this package loaded. Busy instances reload after their current turn settles.
 
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
 
