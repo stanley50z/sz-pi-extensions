@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -119,6 +120,49 @@ test("/new opens the selector on Pi runtimes that expose hasUI without mode", as
   await pi.handlers.get("session_before_switch")({ reason: "new" }, ctx);
 
   assert.match(ctx.renders[0].join("\n"), /New session working directory/);
+});
+
+test("/new-cwd-switch stays internal and does not appear in slash autocomplete", async () => {
+  const { createNewSessionCwdExtension } = await loadExtension();
+  const pi = createFakePi();
+  const autocompleteFactories = [];
+
+  createNewSessionCwdExtension({
+    listSessions: async () => [],
+    cwdExists: () => true,
+    schedule: (task) => task(),
+    createSessionFile: () => {
+      throw new Error("autocomplete should not create a session");
+    },
+  })(pi);
+
+  await pi.handlers.get("session_start")({}, {
+    mode: "tui",
+    ui: {
+      addAutocompleteProvider(factory) {
+        autocompleteFactories.push(factory);
+      },
+    },
+  });
+
+  const baseProvider = new CombinedAutocompleteProvider([
+    { name: "new", description: "Start a new session" },
+    { name: "new-cwd-switch", description: "Internal cwd switch" },
+  ], process.cwd());
+  const provider = autocompleteFactories[0](baseProvider);
+  const suggestions = await provider.getSuggestions(
+    ["/new"],
+    0,
+    4,
+    { signal: new AbortController().signal },
+  );
+
+  assert.deepEqual(suggestions.items, [{
+    value: "new",
+    label: "new",
+    description: "Start a new session",
+  }]);
+  assert.equal(pi.commands.has("new-cwd-switch"), true);
 });
 
 test("a cross-cwd selection creates a readable blank session with the selected cwd", async () => {

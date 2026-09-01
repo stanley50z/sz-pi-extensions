@@ -9,6 +9,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
+const INTERNAL_SWITCH_COMMAND = "new-cwd-switch";
+
 interface RecentSession {
   cwd: string;
   modified: Date;
@@ -104,7 +106,28 @@ export function createNewSessionCwdExtension(deps: NewSessionCwdDependencies) {
   return function newSessionCwdExtension(pi: ExtensionAPI) {
     let pendingCwd: string | undefined;
 
-    pi.registerCommand("new-cwd-switch", {
+    pi.on("session_start", (_event, ctx) => {
+      if (!hasTui(ctx)) return;
+
+      ctx.ui.addAutocompleteProvider((current) => ({
+        triggerCharacters: current.triggerCharacters,
+        async getSuggestions(lines, cursorLine, cursorCol, options) {
+          const suggestions = await current.getSuggestions(lines, cursorLine, cursorCol, options);
+          if (!suggestions?.prefix.startsWith("/")) return suggestions;
+
+          const items = suggestions.items.filter((item) => item.value !== INTERNAL_SWITCH_COMMAND);
+          return items.length > 0 ? { ...suggestions, items } : null;
+        },
+        applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+          return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+        },
+        shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+          return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+        },
+      }));
+    });
+
+    pi.registerCommand(INTERNAL_SWITCH_COMMAND, {
       description: "Complete a /new working-directory selection",
       handler: async (_args, ctx) => {
         const cwd = pendingCwd;
@@ -134,7 +157,7 @@ export function createNewSessionCwdExtension(deps: NewSessionCwdDependencies) {
 
       pendingCwd = selected;
       deps.schedule(() => {
-        pi.sendUserMessage("/new-cwd-switch", { expandPromptTemplates: true });
+        pi.sendUserMessage(`/${INTERNAL_SWITCH_COMMAND}`, { expandPromptTemplates: true });
       });
       return { cancel: true };
     });
