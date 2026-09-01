@@ -1,5 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatTerminalTitle } from "./session-title.ts";
 
@@ -245,6 +248,8 @@ function showNotification(
   const body = base64Utf8(notification.body);
   const notificationTag = `pi-${randomUUID()}`;
   const tag = base64Utf8(notificationTag);
+  const cancelPath = join(tmpdir(), `${notificationTag}.cancel`);
+  const encodedCancelPath = base64Utf8(cancelPath);
   const tabRuntimeId = notification.tabRuntimeId?.join(", ");
   const toastScenario = options.persistent ? " scenario='reminder'" : "";
   const toastActions = options.persistent
@@ -281,6 +286,7 @@ public static class PiToastSignal {
 $title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${title}"))
 $body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${body}"))
 $tag = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${tag}"))
+$cancelPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${encodedCancelPath}"))
 $xmlTitle = [Security.SecurityElement]::Escape($title)
 $xmlBody = [Security.SecurityElement]::Escape($body)
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
@@ -306,8 +312,14 @@ if ($notifier.Setting -ne [Windows.UI.Notifications.NotificationSetting]::Enable
 }
 $notifier.Show($toast)
 ${options.activateTarget ? `
-$waitMilliseconds = ${options.persistent ? -1 : 8_000}
-[PiToastSignal]::Signal.Wait($waitMilliseconds) | Out-Null
+$deadline = $(if (${options.persistent ? "$true" : "$false"}) { [DateTime]::MaxValue } else { [DateTime]::UtcNow.AddMilliseconds(8000) })
+while ([PiToastSignal]::Result -eq 0 -and -not (Test-Path $cancelPath) -and [DateTime]::UtcNow -lt $deadline) {
+  [PiToastSignal]::Signal.Wait(100) | Out-Null
+}
+if (Test-Path $cancelPath) {
+  try { $notifier.Hide($toast) } finally { Remove-Item $cancelPath -Force -ErrorAction SilentlyContinue }
+  exit 0
+}
 if ([PiToastSignal]::Result -eq 3) { throw "Windows could not display the notification" }
 if ([PiToastSignal]::Result -ne 1) { exit 0 }
 [Windows.UI.Notifications.ToastNotificationManager]::History.Remove($tag, "pi", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App")
@@ -352,6 +364,7 @@ if (-not $broughtToFront -or -not $focused) { throw "Windows refused to focus th
     { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
   );
   let cancelled = false;
+  let finished = false;
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
@@ -361,23 +374,20 @@ if (-not $broughtToFront -or -not $focused) { throw "Windows refused to focus th
     if (!cancelled) onError?.(error);
   });
   child.once("exit", (code) => {
+    finished = true;
+    rmSync(cancelPath, { force: true });
     if (cancelled || code === 0 || code === null) return;
     onError?.(new Error(stderr.trim() || `PowerShell exited with code ${code}`));
   });
   return () => {
     if (cancelled) return;
     cancelled = true;
-    child.kill();
-    const removeScript = `
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.UI.Notifications.ToastNotificationManager]::History.Remove("${notificationTag}", "pi", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App")
-`;
-    const remover = spawn(
-      "powershell.exe",
-      [...POWERSHELL_ARGS, encodedPowerShell(removeScript)],
-      { detached: true, stdio: "ignore", windowsHide: true },
-    );
-    remover.unref();
+    if (finished) return;
+    try {
+      writeFileSync(cancelPath, "", "utf8");
+    } catch (error) {
+      onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
   };
 }
 
