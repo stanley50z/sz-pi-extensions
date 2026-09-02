@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatTerminalTitle } from "./session-title.ts";
 
@@ -20,12 +21,14 @@ type TerminalState = "background" | "foreground-active" | "foreground-inactive";
 
 interface NotificationOptions {
   persistent: boolean;
-  activateTarget: boolean;
+  activationUri: string;
 }
 
 interface WindowsNotifyDependencies {
   platform: NodeJS.Platform;
   createTabMarker: () => string;
+  registerProtocolHandler: () => Promise<void>;
+  createActivationUri: (target: TerminalTarget) => string;
   captureTerminalWindow: (tabMarker: string) => Promise<TerminalTarget>;
   getTerminalState: (target: TerminalTarget) => Promise<TerminalState>;
   showNotification: (
@@ -177,6 +180,47 @@ function base64Utf8(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
 }
 
+function registerProtocolHandler(): Promise<void> {
+  const helperPath = base64Utf8(fileURLToPath(new URL("./windows-notify-focus.ps1", import.meta.url)));
+  const script = `
+$helperPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${helperPath}"))
+$protocolKey = "HKCU:\\Software\\Classes\\pi-notify"
+New-Item $protocolKey -Force | Out-Null
+Set-Item $protocolKey "URL:Pi Notification"
+New-ItemProperty $protocolKey -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+$commandKey = New-Item "$protocolKey\\shell\\open\\command" -Force
+$command = '"' + (Join-Path $PSHOME "powershell.exe") + '" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $helperPath + '" "%1"'
+Set-Item $commandKey.PSPath $command
+Get-ChildItem $env:TEMP -Filter "pi-notify-*.json" -ErrorAction SilentlyContinue |
+  Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-1) } |
+  Remove-Item -Force -ErrorAction SilentlyContinue
+`;
+  return new Promise((resolve, reject) => {
+    execFile(
+      "powershell.exe",
+      [...POWERSHELL_ARGS, encodedPowerShell(script)],
+      { encoding: "utf8", timeout: 5_000, windowsHide: true },
+      (error, _stdout, stderr) => {
+        if (error) {
+          reject(new Error(`Could not register notification clicks: ${stderr.trim() || error.message}`));
+          return;
+        }
+        resolve();
+      },
+    );
+  });
+}
+
+function createActivationUri(target: TerminalTarget): string {
+  const token = randomUUID();
+  writeFileSync(join(tmpdir(), `pi-notify-${token}.json`), JSON.stringify({
+    expiresAt: Date.now() + 24 * 60 * 60 * 1_000,
+    windowHandle: target.windowHandle,
+    tabRuntimeId: target.tabRuntimeId,
+  }), "utf8");
+  return `pi-notify://focus/${token}`;
+}
+
 function terminalState(target: TerminalTarget): Promise<TerminalState> {
   const tabRuntimeId = target.tabRuntimeId?.join(", ");
   const script = `
@@ -238,7 +282,7 @@ throw "The Pi terminal tab no longer exists"
   });
 }
 
-/** Shows a toast and focuses the captured tab only after explicit activation. */
+/** Shows a toast whose clicks route through the registered Pi focus protocol. */
 function showNotification(
   notification: WindowsNotification,
   options: NotificationOptions,
@@ -246,60 +290,47 @@ function showNotification(
 ): () => void {
   const title = base64Utf8(notification.title);
   const body = base64Utf8(notification.body);
+  const activationUri = base64Utf8(options.activationUri);
+  const activationToken = new URL(options.activationUri).pathname.slice(1);
+  const activationStatePath = join(tmpdir(), `pi-notify-${activationToken}.json`);
   const notificationTag = `pi-${randomUUID()}`;
   const tag = base64Utf8(notificationTag);
   const cancelPath = join(tmpdir(), `${notificationTag}.cancel`);
   const encodedCancelPath = base64Utf8(cancelPath);
-  const tabRuntimeId = notification.tabRuntimeId?.join(", ");
   const toastScenario = options.persistent ? " scenario='reminder'" : "";
   const toastActions = options.persistent
-    ? "<audio silent='true'/><actions><action content='Open Pi' arguments='open' activationType='background'/></actions>"
+    ? "<audio silent='true'/><actions><action content='Open Pi' arguments='$xmlActivationUri' activationType='protocol'/><action content='Dismiss' arguments='dismiss' activationType='background'/></actions>"
     : "";
   const script = `
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
 Add-Type @"
 using System;
-using System.Runtime.InteropServices;
 using System.Threading;
-public static class PiTerminalWindow {
-  [DllImport("user32.dll")]
-  public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")]
-  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
-}
 public static class PiToastSignal {
   public static readonly ManualResetEventSlim Signal = new ManualResetEventSlim(false);
   public static int Result;
-  public static void OnActivated(object sender, object args) { Result = 1; Signal.Set(); }
   public static void OnDismissed(object sender, object args) { Result = 2; Signal.Set(); }
   public static void OnFailed(object sender, object args) { Result = 3; Signal.Set(); }
 }
 "@
-
 $title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${title}"))
 $body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${body}"))
 $tag = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${tag}"))
+$activationUri = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${activationUri}"))
 $cancelPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${encodedCancelPath}"))
 $xmlTitle = [Security.SecurityElement]::Escape($title)
 $xmlBody = [Security.SecurityElement]::Escape($body)
+$xmlActivationUri = [Security.SecurityElement]::Escape($activationUri)
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml("<toast${toastScenario}><visual><binding template='ToastGeneric'><text>$xmlTitle</text><text>$xmlBody</text></binding></visual>${toastActions}</toast>")
+$xml.LoadXml("<toast activationType='protocol' launch='$xmlActivationUri'${toastScenario}><visual><binding template='ToastGeneric'><text>$xmlTitle</text><text>$xmlBody</text></binding></visual>${toastActions}</toast>")
 $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
 $toast.Tag = $tag
 $toast.Group = "pi"
-${options.activateTarget ? `
+${options.persistent ? `
 $tokens = @{}
-foreach ($eventName in @("Activated", "Dismissed", "Failed")) {
+foreach ($eventName in @("Dismissed", "Failed")) {
   $eventInfo = $toast.GetType().GetEvent($eventName)
   $callback = [PiToastSignal].GetMethod("On$eventName")
   $handler = [Delegate]::CreateDelegate($eventInfo.EventHandlerType, $callback)
@@ -311,9 +342,8 @@ if ($notifier.Setting -ne [Windows.UI.Notifications.NotificationSetting]::Enable
   throw "Windows Terminal notifications are $($notifier.Setting)"
 }
 $notifier.Show($toast)
-${options.activateTarget ? `
-$deadline = $(if (${options.persistent ? "$true" : "$false"}) { [DateTime]::MaxValue } else { [DateTime]::UtcNow.AddMilliseconds(8000) })
-while ([PiToastSignal]::Result -eq 0 -and -not (Test-Path $cancelPath) -and [DateTime]::UtcNow -lt $deadline) {
+${options.persistent ? `
+while ([PiToastSignal]::Result -eq 0 -and -not (Test-Path $cancelPath)) {
   [PiToastSignal]::Signal.Wait(100) | Out-Null
 }
 if (Test-Path $cancelPath) {
@@ -321,40 +351,6 @@ if (Test-Path $cancelPath) {
   exit 0
 }
 if ([PiToastSignal]::Result -eq 3) { throw "Windows could not display the notification" }
-if ([PiToastSignal]::Result -ne 1) { exit 0 }
-[Windows.UI.Notifications.ToastNotificationManager]::History.Remove($tag, "pi", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App")
-
-$window = [IntPtr]::new(${notification.windowHandle})
-if (-not [PiTerminalWindow]::IsWindow($window)) { throw "The terminal window no longer exists" }
-${tabRuntimeId === undefined ? "" : `
-$targetRuntimeId = @(${tabRuntimeId})
-$root = [System.Windows.Automation.AutomationElement]::FromHandle($window)
-$condition = New-Object System.Windows.Automation.PropertyCondition(
-  [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-  [System.Windows.Automation.ControlType]::TabItem
-)
-$tabs = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
-$targetTab = $null
-foreach ($tab in $tabs) {
-  if ((@($tab.GetRuntimeId()) -join ",") -eq ($targetRuntimeId -join ",")) {
-    $targetTab = $tab
-    break
-  }
-}
-if ($null -eq $targetTab) { throw "The Pi terminal tab no longer exists" }
-$selection = $null
-if (-not $targetTab.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selection)) {
-  throw "The Pi terminal tab cannot be selected"
-}
-$selection.Select()
-$targetTab.SetFocus()
-`}
-if ([PiTerminalWindow]::IsIconic($window)) { [PiTerminalWindow]::ShowWindowAsync($window, 9) | Out-Null }
-$noMoveOrResize = 0x0001 -bor 0x0002
-$broughtToFront = [PiTerminalWindow]::SetWindowPos($window, [IntPtr]::new(-1), 0, 0, 0, 0, $noMoveOrResize)
-$broughtToFront = [PiTerminalWindow]::SetWindowPos($window, [IntPtr]::new(-2), 0, 0, 0, 0, $noMoveOrResize) -and $broughtToFront
-$focused = [PiTerminalWindow]::SetForegroundWindow($window)
-if (-not $broughtToFront -or -not $focused) { throw "Windows refused to focus the terminal window" }
 ` : ""}
 `;
 
@@ -382,6 +378,7 @@ if (-not $broughtToFront -or -not $focused) { throw "Windows refused to focus th
   return () => {
     if (cancelled) return;
     cancelled = true;
+    rmSync(activationStatePath, { force: true });
     if (finished) return;
     try {
       writeFileSync(cancelPath, "", "utf8");
@@ -470,6 +467,8 @@ while ($true) {
 const defaultDependencies: WindowsNotifyDependencies = {
   platform: process.platform,
   createTabMarker: () => `Pi notification target ${randomUUID()}`,
+  registerProtocolHandler,
+  createActivationUri,
   captureTerminalWindow,
   getTerminalState: terminalState,
   showNotification,
@@ -513,7 +512,7 @@ export function createWindowsNotifyExtension(
           ...terminalTarget,
         }, {
           persistent: state === "background",
-          activateTarget: state !== "foreground-active",
+          activationUri: deps.createActivationUri(terminalTarget),
         }, (error) => reportError(ctx, error));
         cancelNotification = dismissNotification;
 
@@ -542,6 +541,12 @@ export function createWindowsNotifyExtension(
       agentRunning = false;
       reportedError = false;
       if (ctx.mode !== "tui") return;
+
+      try {
+        await deps.registerProtocolHandler();
+      } catch (error) {
+        reportError(ctx, error);
+      }
 
       const tabMarker = deps.createTabMarker();
       ctx.ui.setTitle(tabMarker);

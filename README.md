@@ -41,6 +41,8 @@ pi install ~/sz-pi-extensions
 
 This keeps the package editable — changes you make are live after restarting Pi. No sync step needed. The npm install fetches the pinned public [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) dependency, clones [Ketch](https://github.com/1broseidon/ketch) into `node_modules/ketch`, and exposes both packages' Pi resources. Because `node_modules/` is ignored, generated dependency contents remain separate from this repository's tracked files.
 
+On Windows, session startup registers a per-user `pi-notify:` URI handler under `HKCU`. Notification clicks launch the bundled hidden focus helper with a one-time token, which selects the existing Pi tab without opening another Terminal window. No administrator access is required.
+
 Pi discovers extensions and skills from the package manifest in `package.json`:
 
 ```json

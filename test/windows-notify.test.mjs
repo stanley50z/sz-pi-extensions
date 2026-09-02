@@ -15,6 +15,7 @@ function setup({
   const terminalTitles = [];
   const attentionSignals = [];
   const activationWatchers = [];
+  let protocolRegistrations = 0;
   let captureIndex = 0;
   const pi = {
     getSessionName: () => "Notification work",
@@ -25,6 +26,10 @@ function setup({
   const extension = createWindowsNotifyExtension({
     platform,
     createTabMarker: () => "Pi notification target test",
+    async registerProtocolHandler() {
+      protocolRegistrations += 1;
+    },
+    createActivationUri: () => "pi-notify://focus/test-token",
     async captureTerminalWindow(title) {
       capturedTitles.push(title);
       return targets[Math.min(captureIndex++, targets.length - 1)];
@@ -66,6 +71,9 @@ function setup({
     terminalTitles,
     attentionSignals,
     activationWatchers,
+    get protocolRegistrations() {
+      return protocolRegistrations;
+    },
     ctx,
   };
 }
@@ -75,6 +83,7 @@ test("captures the calling Pi tab even when another terminal tab is selected", a
 
   await state.handlers.get("session_start")({}, state.ctx);
 
+  assert.equal(state.protocolRegistrations, 1);
   assert.deepEqual(state.capturedTitles, ["Pi notification target test"]);
   assert.deepEqual(state.terminalTitles, ["Pi notification target test", "Pi - Notification work"]);
 });
@@ -93,7 +102,7 @@ test("a completed background tab posts a persistent notification without taking 
     windowHandle: 101,
     tabRuntimeId: [42, 7],
     persistent: true,
-    activateTarget: true,
+    activationUri: "pi-notify://focus/test-token",
   }]);
   assert.deepEqual(state.attentionSignals, []);
   assert.equal(state.activationWatchers.length, 1);
@@ -115,7 +124,7 @@ test("a completed inactive tab uses a transient toast and a Terminal attention r
     windowHandle: 101,
     tabRuntimeId: [42, 7],
     persistent: false,
-    activateTarget: true,
+    activationUri: "pi-notify://focus/test-token",
   }]);
   assert.deepEqual(state.attentionSignals, [true]);
   assert.equal(state.activationWatchers.length, 1);
@@ -138,7 +147,7 @@ test("a completed active tab uses a normal transient notification", async () => 
     windowHandle: 101,
     tabRuntimeId: [42, 7],
     persistent: false,
-    activateTarget: false,
+    activationUri: "pi-notify://focus/test-token",
   }]);
   assert.deepEqual(state.attentionSignals, []);
 });
@@ -159,7 +168,7 @@ test("agent input prompts use the same state-aware notification behavior", async
     windowHandle: 101,
     tabRuntimeId: [42, 7],
     persistent: true,
-    activateTarget: true,
+    activationUri: "pi-notify://focus/test-token",
   }]);
 });
 
