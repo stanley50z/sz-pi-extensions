@@ -66,7 +66,7 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 `/new` opens a working-directory selector before creating the session. The active session cwd is selected by default; other existing cwds found in session history are deduplicated and ordered by most recent activity.
 
-`/reload-all` reloads extensions, skills, prompts, themes, and context files in every running Pi instance that has this package loaded. Busy instances reload after their current turn settles.
+`/reload-all` reloads extensions, skills, prompts, themes, and context files in every running normal Pi instance that has this package loaded. Busy instances reload after their current turn settles; Automode sessions are left unchanged.
 
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
 

@@ -21,6 +21,16 @@ interface ReloadRequest {
   requestedAt: number;
 }
 
+function isAutomodeSession(ctx: ExtensionContext): boolean {
+  if (process.env.AUTOMODE_STAGE_CONFIGURATION !== undefined) return true;
+
+  return ctx.sessionManager.getEntries().some(
+    (entry) => entry.type === "custom"
+      && (entry.customType === "automode.stage-configuration"
+        || entry.customType === "automode.coordinator"),
+  );
+}
+
 function readRequest(requestPath: string): ReloadRequest | undefined {
   try {
     const request = JSON.parse(readFileSync(requestPath, "utf8")) as Partial<ReloadRequest>;
@@ -101,7 +111,7 @@ export default function (pi: ExtensionAPI): void {
   }
 
   pi.on("session_start", async (_event, ctx) => {
-    startWatching(ctx);
+    if (!isAutomodeSession(ctx)) startWatching(ctx);
   });
 
   pi.on("session_shutdown", async () => {
@@ -112,7 +122,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("reload-all", {
-    description: "Reload every running Pi instance",
+    description: "Reload every running normal Pi instance",
     handler: async (args, ctx) => {
       const remoteRequestId = args.startsWith(REMOTE_REQUEST_PREFIX)
         ? args.slice(REMOTE_REQUEST_PREFIX.length)
@@ -121,6 +131,7 @@ export default function (pi: ExtensionAPI): void {
       if (remoteRequestId) {
         if (remoteRequestId !== pendingRequestId) return;
         pendingRequestId = undefined;
+        if (isAutomodeSession(ctx)) return;
         await ctx.reload();
         return;
       }
@@ -137,7 +148,11 @@ export default function (pi: ExtensionAPI): void {
       };
       lastSeenRequestId = request.id;
       writeRequest(requestPath, request);
-      ctx.ui.notify("Reloading all running Pi instances...", "info");
+      if (isAutomodeSession(ctx)) {
+        ctx.ui.notify("Reloading normal Pi instances; leaving Automode unchanged...", "info");
+        return;
+      }
+      ctx.ui.notify("Reloading all normal Pi instances...", "info");
       await ctx.reload();
       return;
     },

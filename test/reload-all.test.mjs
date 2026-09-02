@@ -41,11 +41,16 @@ function createFakePi() {
   };
 }
 
-function createContext() {
+function createContext(entries = []) {
   const notifications = [];
   return {
     reloads: 0,
     notifications,
+    sessionManager: {
+      getEntries() {
+        return entries;
+      },
+    },
     async reload() {
       this.reloads += 1;
     },
@@ -71,7 +76,7 @@ async function install(agentDir) {
   }
 }
 
-test('/reload-all reloads every running Pi instance', async () => {
+test('/reload-all reloads every running normal Pi instance', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'pi-reload-all-'));
   const firstPi = await install(agentDir);
   const secondPi = await install(agentDir);
@@ -87,4 +92,27 @@ test('/reload-all reloads every running Pi instance', async () => {
 
   await firstPi.handlers.get('session_shutdown')?.({}, firstContext);
   await secondPi.handlers.get('session_shutdown')?.({}, secondContext);
+});
+
+test('/reload-all leaves Automode sessions running without reloading them', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'pi-reload-all-automode-'));
+  const normalPi = await install(agentDir);
+  const automodePi = await install(agentDir);
+  const normalContext = createContext();
+  const automodeContext = createContext([{
+    type: 'custom',
+    customType: 'automode.stage-configuration',
+    data: {},
+  }]);
+
+  await normalPi.start(normalContext);
+  await automodePi.start(automodeContext);
+  await automodePi.commands.get('reload-all').handler('', automodeContext);
+
+  assert.equal(automodeContext.reloads, 0);
+  await waitUntil(() => normalContext.reloads === 1);
+  assert.equal(automodeContext.reloads, 0);
+
+  await normalPi.handlers.get('session_shutdown')?.({}, normalContext);
+  await automodePi.handlers.get('session_shutdown')?.({}, automodeContext);
 });
