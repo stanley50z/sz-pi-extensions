@@ -1,4 +1,10 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  getMarkdownTheme,
+  keyText,
+  type MessageRenderer,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { Box, Markdown, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import {
   withMinimalToolOutput,
@@ -41,6 +47,43 @@ function subagentRendering(name: string): MinimalToolOutputOptions {
     },
   };
 }
+
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as { type?: unknown; text?: unknown };
+    return value.type === "text" && typeof value.text === "string" ? [value.text] : [];
+  }).join("\n");
+}
+
+export const renderSubagentResult: MessageRenderer = (message, { expanded }, theme) => {
+  const content = messageText(message.content);
+  const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+  const label = theme.fg("customMessageLabel", theme.bold("[subagent]"));
+
+  if (!expanded) {
+    const summary = content.split(/\r?\n/, 1)[0]?.trim() || "Subagent finished";
+    box.addChild(new Text(
+      `${label} ${theme.fg("customMessageText", summary)}`
+        + theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`),
+      0,
+      0,
+    ));
+    return box;
+  }
+
+  box.addChild(new Text(label, 0, 0));
+  box.addChild(new Markdown(
+    content,
+    0,
+    0,
+    getMarkdownTheme(),
+    { color: (value) => theme.fg("customMessageText", value) },
+  ));
+  return box;
+};
 
 export function withMinimalSubagentOutput<TParams extends TSchema, TDetails>(
   tool: ToolDefinition<TParams, TDetails>,

@@ -6,6 +6,8 @@ import {
   createLsTool,
   createReadTool,
   createWriteTool,
+  keyText,
+  SkillInvocationMessageComponent,
   type ExtensionAPI,
   type Theme,
   type ToolDefinition,
@@ -47,6 +49,12 @@ type UltraCollapsedGroup = ToolGroup & {
   callIds: Set<string>;
 };
 
+type SkillReadGroup = {
+  firstId: string;
+  callIds: Set<string>;
+  names: Map<string, string>;
+};
+
 type ToolRenderTheme = {
   fg(color: "toolTitle" | "accent" | "muted" | "toolOutput", text: string): string;
 };
@@ -59,6 +67,7 @@ export type MinimalToolOutputOptions = {
 type MinimalToolOutputState = {
   collapsedGroups: Map<string, ToolGroup>;
   ultraCollapsedGroups: Map<string, UltraCollapsedGroup>;
+  skillReadGroups: Map<string, SkillReadGroup>;
   inlineNarratives: Set<string>;
   renderInvalidators: Map<string, () => void>;
   minimalToolOptions: Map<string, MinimalToolOutputOptions>;
@@ -73,15 +82,19 @@ const sharedGlobal = globalThis as MinimalToolOutputGlobal;
 const sharedState = sharedGlobal.__szPiMinimalToolOutputStateV1 ??= {
   collapsedGroups: new Map<string, ToolGroup>(),
   ultraCollapsedGroups: new Map<string, UltraCollapsedGroup>(),
+  skillReadGroups: new Map<string, SkillReadGroup>(),
   inlineNarratives: new Set<string>(),
   renderInvalidators: new Map<string, () => void>(),
   minimalToolOptions: new Map<string, MinimalToolOutputOptions>(),
 };
 
+sharedState.skillReadGroups ??= new Map<string, SkillReadGroup>();
+
 const toolCache = new Map<string, BuiltInTools>();
 const {
   collapsedGroups,
   ultraCollapsedGroups,
+  skillReadGroups,
   inlineNarratives,
   renderInvalidators,
   minimalToolOptions,
@@ -193,11 +206,64 @@ function hasNarrativeContent(content: readonly unknown[]): boolean {
   });
 }
 
+function isSkillRead(name: string, args: Record<string, unknown>): boolean {
+  const path = args.path;
+  return name === "read"
+    && typeof path === "string"
+    && /(?:^|[\\/])SKILL\.md$/i.test(path);
+}
+
+function isMinimalCall(call: ToolCallContent): boolean {
+  return minimalToolOptions.has(call.name) && !isSkillRead(call.name, call.arguments);
+}
+
+function skillNameFromPath(path: string): string {
+  return path.split(/[\\/]/).at(-2) ?? "skill";
+}
+
+function indexSkillReadGroups(calls: ToolCallContent[]): void {
+  for (const call of calls) skillReadGroups.delete(call.id);
+
+  let start = 0;
+  while (start < calls.length) {
+    if (!isSkillRead(calls[start].name, calls[start].arguments)) {
+      start += 1;
+      continue;
+    }
+
+    let end = start + 1;
+    while (
+      end < calls.length
+      && isSkillRead(calls[end].name, calls[end].arguments)
+    ) {
+      end += 1;
+    }
+
+    if (end - start > 1) {
+      const groupedCalls = calls.slice(start, end);
+      const group: SkillReadGroup = {
+        firstId: groupedCalls[0].id,
+        callIds: new Set(groupedCalls.map((call) => call.id)),
+        names: new Map(groupedCalls.map((call) => [
+          call.id,
+          skillNameFromPath(call.arguments.path as string),
+        ])),
+      };
+      for (const call of groupedCalls) {
+        skillReadGroups.set(call.id, group);
+        renderInvalidators.get(call.id)?.();
+      }
+    }
+    start = end;
+  }
+}
+
 function indexToolGroups(content: readonly unknown[]): void {
   const calls = content.filter(isToolCallContent);
   for (const call of calls) collapsedGroups.delete(call.id);
+  indexSkillReadGroups(calls);
 
-  const builtInCalls = calls.filter((call) => minimalToolOptions.has(call.name));
+  const builtInCalls = calls.filter(isMinimalCall);
   const narrative = inlineNarrative(content);
   const hasNarrative = hasNarrativeContent(content);
   if (builtInCalls.length > 0) {
@@ -250,10 +316,21 @@ function indexToolGroups(content: readonly unknown[]): void {
 
   let start = 0;
   while (start < calls.length) {
-    let end = start + 1;
-    while (end < calls.length && calls[end].name === calls[start].name) end += 1;
+    if (!isMinimalCall(calls[start])) {
+      start += 1;
+      continue;
+    }
 
-    if (end - start > 1 && minimalToolOptions.has(calls[start].name)) {
+    let end = start + 1;
+    while (
+      end < calls.length
+      && calls[end].name === calls[start].name
+      && isMinimalCall(calls[end])
+    ) {
+      end += 1;
+    }
+
+    if (end - start > 1) {
       const group = { firstId: calls[start].id, count: end - start };
       for (let index = start; index < end; index += 1) {
         collapsedGroups.set(calls[index].id, group);
@@ -262,6 +339,41 @@ function indexToolGroups(content: readonly unknown[]): void {
     }
     start = end;
   }
+}
+
+function skillReadDetails(path: string, content: string) {
+  const normalized = content.replace(/\r\n?/g, "\n");
+  const frontmatter = normalized.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  const declaredName = frontmatter?.[1]
+    .match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m)?.[1]
+    .trim();
+  const inferredName = skillNameFromPath(path);
+  const body = frontmatter ? normalized.slice(frontmatter[0].length).trim() : normalized.trim();
+  const location = path.replace(/[\\/][^\\/]+$/, "");
+  return {
+    name: declaredName || inferredName,
+    location: path,
+    content: `References are relative to ${location}.\n\n${body}`,
+    userMessage: undefined,
+  };
+}
+
+function skillReadText(result: { content?: readonly unknown[] }): string {
+  return result.content?.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as { type?: unknown; text?: unknown };
+    return value.type === "text" && typeof value.text === "string" ? [value.text] : [];
+  }).join("\n") ?? "";
+}
+
+function renderCollapsedSkillGroup(group: SkillReadGroup, theme: Theme): Component {
+  const names = [...group.callIds].map((id) => group.names.get(id)).filter(Boolean).join(", ");
+  const label = theme.fg("customMessageLabel", theme.bold("[skill]"));
+  const text = `${label} ${theme.fg("customMessageText", names)}`
+    + theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
+  const box = new Box(1, 1, (value) => theme.bg("customMessageBg", value));
+  box.addChild(new OneLine(text));
+  return box;
 }
 
 function shortenPath(path: string): string {
@@ -313,6 +425,10 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
     renderCall(args, theme, context) {
       renderInvalidators.set(context.toolCallId, context.invalidate);
 
+      if (isSkillRead(tool.name, args as Record<string, unknown>)) {
+        return new Container();
+      }
+
       // Ctrl+O still owns Pi's binary `expanded` flag: false is ultra-collapsed,
       // while true is our more detailed (but still result-free) collapsed view.
       if (!context.expanded) {
@@ -359,7 +475,25 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
       }
       return box;
     },
-    renderResult() {
+    renderResult(result, { expanded }, theme, context) {
+      const args = (context.args ?? {}) as Record<string, unknown>;
+      if (isSkillRead(tool.name, args)) {
+        const path = args.path as string;
+        const details = skillReadDetails(path, skillReadText(result));
+        const group = skillReadGroups.get(context.toolCallId);
+        if (group && !expanded) {
+          const previousName = group.names.get(context.toolCallId);
+          group.names.set(context.toolCallId, details.name);
+          if (previousName !== details.name) renderInvalidators.get(group.firstId)?.();
+          return group.firstId === context.toolCallId
+            ? renderCollapsedSkillGroup(group, theme)
+            : new Container();
+        }
+
+        const component = new SkillInvocationMessageComponent(details);
+        component.setExpanded(expanded);
+        return component;
+      }
       return new Container();
     },
   };
@@ -392,6 +526,7 @@ function registerMinimalTool<TParams extends TSchema, TDetails>(
 export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
   collapsedGroups.clear();
   ultraCollapsedGroups.clear();
+  skillReadGroups.clear();
   inlineNarratives.clear();
   renderInvalidators.clear();
   sharedState.activeUltraCollapsedGroup = undefined;
@@ -421,6 +556,7 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     collapsedGroups.clear();
     ultraCollapsedGroups.clear();
+    skillReadGroups.clear();
     inlineNarratives.clear();
     renderInvalidators.clear();
     sharedState.activeUltraCollapsedGroup = undefined;

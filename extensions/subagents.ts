@@ -1,7 +1,10 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import subagentsExtension from "sz-pi-subagents/extensions/subagents/index.ts";
 import type { TSchema } from "typebox";
-import { withMinimalSubagentOutput } from "../lib/subagent-tool-output.ts";
+import {
+  renderSubagentResult,
+  withMinimalSubagentOutput,
+} from "../lib/subagent-tool-output.ts";
 
 export default function minimalSubagentsExtension(pi: ExtensionAPI): void {
   const wrappedPi = new Proxy(pi, {
@@ -20,4 +23,5 @@ export default function minimalSubagentsExtension(pi: ExtensionAPI): void {
   }) as ExtensionAPI;
 
   subagentsExtension(wrappedPi);
+  pi.registerMessageRenderer("sz-subagent-result", renderSubagentResult);
 }

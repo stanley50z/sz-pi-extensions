@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import fileSearchExtension from "../extensions/file-search.ts";
 import minimalToolOutputExtension from "../extensions/minimal-tool-output.ts";
-import { withMinimalSubagentOutput } from "../lib/subagent-tool-output.ts";
+import {
+  renderSubagentResult,
+  withMinimalSubagentOutput,
+} from "../lib/subagent-tool-output.ts";
+
+initTheme(undefined, false);
 
 function install({ beforeMinimal = [], afterMinimal = [] } = {}) {
   const tools = new Map();
@@ -96,6 +102,116 @@ test("collapsed edit shows only its call line", () => {
 
   assert.deepEqual(ultraCollapsedResult.render(120), []);
   assert.deepEqual(collapsedResult.render(120), []);
+});
+
+test("agent skill reads render as skill invocations outside tool groups", async () => {
+  const { tools, handlers } = install();
+  const path = "C:/Users/test/.agents/skills/tdd/SKILL.md";
+  const content = [
+    { type: "toolCall", id: "skill-read", name: "read", arguments: { path } },
+    { type: "toolCall", id: "source-read", name: "read", arguments: { path: "src/app.ts" } },
+  ];
+
+  await handlers.get("message_end")({ message: { role: "assistant", content } });
+
+  const read = tools.get("read");
+  const skillCall = read.renderCall(content[0].arguments, theme, {
+    toolCallId: "skill-read",
+    expanded: false,
+    invalidate() {},
+  });
+  const sourceCall = read.renderCall(content[1].arguments, theme, {
+    toolCallId: "source-read",
+    expanded: false,
+    invalidate() {},
+  });
+  const skillResult = read.renderResult(
+    {
+      content: [{
+        type: "text",
+        text: "---\nname: tdd\ndescription: Test-driven development\n---\n\n# Test-driven development\n\nWrite a failing test first.",
+      }],
+      details: {},
+    },
+    { expanded: false, isPartial: false },
+    theme,
+    { args: content[0].arguments, isError: false },
+  );
+
+  const expandedSkillResult = read.renderResult(
+    {
+      content: [{
+        type: "text",
+        text: "---\nname: tdd\ndescription: Test-driven development\n---\n\n# Test-driven development\n\nWrite a failing test first.",
+      }],
+      details: {},
+    },
+    { expanded: true, isPartial: false },
+    theme,
+    { args: content[0].arguments, isError: false },
+  );
+
+  assert.deepEqual(renderText(skillCall), []);
+  assert.deepEqual(renderText(sourceCall), ["+ 1 tool call"]);
+  assert.match(renderText(skillResult).join("\n"), /\[skill\] tdd .*expand/);
+  assert.match(renderText(expandedSkillResult).join("\n"), /Write a failing test first\./);
+  assert.doesNotMatch(renderText(expandedSkillResult).join("\n"), /description:/);
+});
+
+test("consecutive agent skill reads collapse into one highlighted line", async () => {
+  const { tools, handlers } = install();
+  const calls = ["grill-with-docs", "grilling", "domain-modeling", "unslop"].map(
+    (name) => ({
+      type: "toolCall",
+      id: `skill-${name}`,
+      name: "read",
+      arguments: { path: `C:/Users/test/.agents/skills/${name}/SKILL.md` },
+    }),
+  );
+
+  await handlers.get("message_end")({ message: { role: "assistant", content: calls } });
+
+  const backgroundColors = [];
+  const highlightedTheme = {
+    ...theme,
+    bg(color, text) {
+      backgroundColors.push(color);
+      return text;
+    },
+  };
+  const read = tools.get("read");
+  const rendered = calls.map((call) => read.renderResult(
+    {
+      content: [{
+        type: "text",
+        text: `---\nname: ${call.id.slice("skill-".length)}\ndescription: Test skill\n---\n\n# Instructions`,
+      }],
+      details: {},
+    },
+    { expanded: false, isPartial: false },
+    highlightedTheme,
+    { toolCallId: call.id, args: call.arguments, isError: false },
+  ));
+  const expanded = calls.map((call) => read.renderResult(
+    {
+      content: [{
+        type: "text",
+        text: `---\nname: ${call.id.slice("skill-".length)}\ndescription: Test skill\n---\n\n# Instructions`,
+      }],
+      details: {},
+    },
+    { expanded: true, isPartial: false },
+    theme,
+    { toolCallId: call.id, args: call.arguments, isError: false },
+  ));
+
+  assert.match(
+    renderText(rendered[0]).join("\n"),
+    /\[skill\] grill-with-docs, grilling, domain-modeling, unslop .*expand/,
+  );
+  assert.deepEqual(rendered.slice(1).map((component) => renderText(component)), [[], [], []]);
+  assert.deepEqual([...new Set(backgroundColors)], ["customMessageBg"]);
+  assert.equal(expanded.filter((component) => /Instructions/.test(renderText(component).join("\n"))).length, 4);
 });
 
 test("ultra-collapsed view replaces mixed tool commands with one count", async () => {
@@ -285,6 +401,21 @@ test("ultra-collapsed view includes subagent tools in one tool-call count", asyn
     ).render(120),
     [],
   );
+});
+
+test("settled subagent messages collapse their returned text", () => {
+  const message = {
+    customType: "sz-subagent-result",
+    content: "pi-1 “review” finished (pi)\n\nFirst detailed paragraph.\n\nSecond detailed paragraph.",
+    display: true,
+    details: { id: "pi-1", harness: "pi", status: "done" },
+  };
+  const collapsed = renderSubagentResult(message, { expanded: false, outputPad: 1 }, theme);
+  const expanded = renderSubagentResult(message, { expanded: true, outputPad: 1 }, theme);
+
+  assert.match(renderText(collapsed).join("\n"), /\[subagent\].*pi-1.*expand/);
+  assert.doesNotMatch(renderText(collapsed).join("\n"), /detailed paragraph/);
+  assert.match(renderText(expanded).join("\n"), /Second detailed paragraph\./);
 });
 
 test("ultra-collapsed view keeps rendered Markdown and its tool count on one line", async () => {
