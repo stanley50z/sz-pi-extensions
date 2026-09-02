@@ -11,6 +11,8 @@ import {
   type MinimalToolOutputOptions,
 } from "../extensions/minimal-tool-output.ts";
 
+const SUBAGENTS_RUNNING_EVENT = "sz-subagents:running";
+
 const SUBAGENT_TOOL_NAMES = new Set([
   "subagent_spawn",
   "subagent_check",
@@ -18,6 +20,35 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "subagent_cancel",
   "subagent_list",
 ]);
+
+type SubagentStatusSource = {
+  list(): Array<{ id: string; name: string; status: string }>;
+  subscribe(listener: () => void): () => void;
+};
+
+type EventSink = {
+  events: { emit(name: string, data: unknown): void };
+};
+
+export function connectRunningSubagentStatus(
+  pi: EventSink,
+  source: SubagentStatusSource,
+): () => void {
+  let lastSignature: string | undefined;
+  const publish = () => {
+    const subagents = source.list()
+      .filter(({ status }) => status === "running")
+      .map(({ id, name }) => ({ id, name }));
+    const signature = JSON.stringify(subagents);
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    pi.events.emit(SUBAGENTS_RUNNING_EVENT, { subagents });
+  };
+
+  const unsubscribe = source.subscribe(publish);
+  publish();
+  return unsubscribe;
+}
 
 function stringArg(args: Record<string, unknown>, name: string): string | undefined {
   const value = args[name];
@@ -27,6 +58,7 @@ function stringArg(args: Record<string, unknown>, name: string): string | undefi
 function subagentRendering(name: string): MinimalToolOutputOptions {
   return {
     nouns: ["call", "calls"],
+    alwaysShowCall: true,
     formatCall(args, theme) {
       let detail: string | undefined;
       if (name === "subagent_spawn") {

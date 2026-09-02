@@ -458,6 +458,47 @@ test('footer shows zero token speed before the first assistant response', async 
   }
 });
 
+test('footer adds a short third line only while subagents are running', async () => {
+  const originalCwd = process.cwd();
+  const dir = await mkdtemp(join(tmpdir(), 'sz-pi-footer-subagents-'));
+  process.chdir(dir);
+
+  try {
+    const { default: installFooterExtension } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext();
+
+    installFooterExtension(pi);
+    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+
+    assert.equal(footer.render(100).length, 2);
+
+    pi.events.emit('sz-subagents:running', {
+      subagents: [{ id: 'sa-1', name: 'turn-delivery-research' }],
+    });
+    assert.equal(
+      footer.render(100)[2],
+      '1 subagent running · turn-delivery-research',
+    );
+
+    pi.events.emit('sz-subagents:running', {
+      subagents: [
+        { id: 'sa-1', name: 'turn-delivery-research' },
+        { id: 'sa-2', name: 'api-review' },
+      ],
+    });
+    const runningLines = footer.render(100);
+    assert.equal(runningLines.length, 3);
+    assert.equal(runningLines[2], '2 subagents running · turn-delivery-research, api-review');
+
+    pi.events.emit('sz-subagents:running', { subagents: [] });
+    assert.equal(footer.render(100).length, 2);
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
+
 test('short cwd keeps the session name centered', async () => {
   const originalCwd = process.cwd();
   const repo = await createCleanRepo();

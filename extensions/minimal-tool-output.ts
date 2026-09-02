@@ -6,8 +6,6 @@ import {
   createLsTool,
   createReadTool,
   createWriteTool,
-  keyText,
-  SkillInvocationMessageComponent,
   type ExtensionAPI,
   type Theme,
   type ToolDefinition,
@@ -62,6 +60,7 @@ type ToolRenderTheme = {
 export type MinimalToolOutputOptions = {
   nouns?: [singular: string, plural: string];
   formatCall?: (args: Record<string, unknown>, theme: ToolRenderTheme) => string;
+  alwaysShowCall?: boolean;
 };
 
 type MinimalToolOutputState = {
@@ -214,7 +213,8 @@ function isSkillRead(name: string, args: Record<string, unknown>): boolean {
 }
 
 function isMinimalCall(call: ToolCallContent): boolean {
-  return minimalToolOptions.has(call.name) && !isSkillRead(call.name, call.arguments);
+  const options = minimalToolOptions.get(call.name);
+  return !!options && !options.alwaysShowCall && !isSkillRead(call.name, call.arguments);
 }
 
 function skillNameFromPath(path: string): string {
@@ -341,21 +341,13 @@ function indexToolGroups(content: readonly unknown[]): void {
   }
 }
 
-function skillReadDetails(path: string, content: string) {
+function skillReadName(path: string, content: string): string {
   const normalized = content.replace(/\r\n?/g, "\n");
   const frontmatter = normalized.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
   const declaredName = frontmatter?.[1]
     .match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m)?.[1]
     .trim();
-  const inferredName = skillNameFromPath(path);
-  const body = frontmatter ? normalized.slice(frontmatter[0].length).trim() : normalized.trim();
-  const location = path.replace(/[\\/][^\\/]+$/, "");
-  return {
-    name: declaredName || inferredName,
-    location: path,
-    content: `References are relative to ${location}.\n\n${body}`,
-    userMessage: undefined,
-  };
+  return declaredName || skillNameFromPath(path);
 }
 
 function skillReadText(result: { content?: readonly unknown[] }): string {
@@ -366,14 +358,16 @@ function skillReadText(result: { content?: readonly unknown[] }): string {
   }).join("\n") ?? "";
 }
 
-function renderCollapsedSkillGroup(group: SkillReadGroup, theme: Theme): Component {
-  const names = [...group.callIds].map((id) => group.names.get(id)).filter(Boolean).join(", ");
+function renderSkillNames(names: string, theme: Theme): Component {
   const label = theme.fg("customMessageLabel", theme.bold("[skill]"));
-  const text = `${label} ${theme.fg("customMessageText", names)}`
-    + theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
   const box = new Box(1, 1, (value) => theme.bg("customMessageBg", value));
-  box.addChild(new OneLine(text));
+  box.addChild(new OneLine(`${label} ${theme.fg("customMessageText", names)}`));
   return box;
+}
+
+function renderSkillGroup(group: SkillReadGroup, theme: Theme): Component {
+  const names = [...group.callIds].map((id) => group.names.get(id)).filter(Boolean).join(", ");
+  return renderSkillNames(names, theme);
 }
 
 function shortenPath(path: string): string {
@@ -431,7 +425,7 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
 
       // Ctrl+O still owns Pi's binary `expanded` flag: false is ultra-collapsed,
       // while true is our more detailed (but still result-free) collapsed view.
-      if (!context.expanded) {
+      if (!context.expanded && !options.alwaysShowCall) {
         const group = ultraCollapsedGroups.get(context.toolCallId);
         if (group && group.firstId !== context.toolCallId) return new Container();
         const count = group?.count ?? 1;
@@ -475,24 +469,21 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
       }
       return box;
     },
-    renderResult(result, { expanded }, theme, context) {
+    renderResult(result, _options, theme, context) {
       const args = (context.args ?? {}) as Record<string, unknown>;
       if (isSkillRead(tool.name, args)) {
         const path = args.path as string;
-        const details = skillReadDetails(path, skillReadText(result));
+        const name = skillReadName(path, skillReadText(result));
         const group = skillReadGroups.get(context.toolCallId);
-        if (group && !expanded) {
+        if (group) {
           const previousName = group.names.get(context.toolCallId);
-          group.names.set(context.toolCallId, details.name);
-          if (previousName !== details.name) renderInvalidators.get(group.firstId)?.();
+          group.names.set(context.toolCallId, name);
+          if (previousName !== name) renderInvalidators.get(group.firstId)?.();
           return group.firstId === context.toolCallId
-            ? renderCollapsedSkillGroup(group, theme)
+            ? renderSkillGroup(group, theme)
             : new Container();
         }
-
-        const component = new SkillInvocationMessageComponent(details);
-        component.setExpanded(expanded);
-        return component;
+        return renderSkillNames(name, theme);
       }
       return new Container();
     },

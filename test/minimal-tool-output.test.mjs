@@ -5,6 +5,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import fileSearchExtension from "../extensions/file-search.ts";
 import minimalToolOutputExtension from "../extensions/minimal-tool-output.ts";
 import {
+  connectRunningSubagentStatus,
   renderSubagentResult,
   withMinimalSubagentOutput,
 } from "../lib/subagent-tool-output.ts";
@@ -153,9 +154,13 @@ test("agent skill reads render as skill invocations outside tool groups", async 
 
   assert.deepEqual(renderText(skillCall), []);
   assert.deepEqual(renderText(sourceCall), ["+ 1 tool call"]);
-  assert.match(renderText(skillResult).join("\n"), /\[skill\] tdd .*expand/);
-  assert.match(renderText(expandedSkillResult).join("\n"), /Write a failing test first\./);
-  assert.doesNotMatch(renderText(expandedSkillResult).join("\n"), /description:/);
+  assert.match(renderText(skillResult).join("\n"), /\[skill\] tdd/);
+  assert.doesNotMatch(renderText(skillResult).join("\n"), /expand|description:|Write a failing test/);
+  assert.match(renderText(expandedSkillResult).join("\n"), /\[skill\] tdd/);
+  assert.doesNotMatch(
+    renderText(expandedSkillResult).join("\n"),
+    /expand|description:|Write a failing test/,
+  );
 });
 
 test("consecutive agent skill reads collapse into one highlighted line", async () => {
@@ -207,11 +212,13 @@ test("consecutive agent skill reads collapse into one highlighted line", async (
 
   assert.match(
     renderText(rendered[0]).join("\n"),
-    /\[skill\] grill-with-docs, grilling, domain-modeling, unslop .*expand/,
+    /\[skill\] grill-with-docs, grilling, domain-modeling, unslop/,
   );
+  assert.doesNotMatch(renderText(rendered[0]).join("\n"), /expand|Instructions/);
   assert.deepEqual(rendered.slice(1).map((component) => renderText(component)), [[], [], []]);
   assert.deepEqual([...new Set(backgroundColors)], ["customMessageBg"]);
-  assert.equal(expanded.filter((component) => /Instructions/.test(renderText(component).join("\n"))).length, 4);
+  assert.deepEqual(renderText(expanded[0]), renderText(rendered[0]));
+  assert.deepEqual(expanded.slice(1).map((component) => renderText(component)), [[], [], []]);
 });
 
 test("ultra-collapsed view replaces mixed tool commands with one count", async () => {
@@ -353,7 +360,7 @@ test("ultra-collapsed view includes local search tools in one tool-call count", 
   assert.deepEqual(calls.slice(1).map((call) => renderText(call)), [[], []]);
 });
 
-test("ultra-collapsed view includes subagent tools in one tool-call count", async () => {
+test("ultra-collapsed view keeps subagent calls visible without their prompts", async () => {
   const subagentsExtension = (pi) => {
     pi.registerTool(withMinimalSubagentOutput({
       name: "subagent_spawn",
@@ -390,8 +397,9 @@ test("ultra-collapsed view includes subagent tools in one tool-call count", asyn
     invalidate() {},
   });
 
-  assert.deepEqual(renderText(spawnCall), ["Delegating the review + 2 tool calls"]);
-  assert.deepEqual(renderText(readCall), []);
+  assert.deepEqual(renderText(spawnCall), ["", "subagent_spawn review with pi", ""]);
+  assert.doesNotMatch(renderText(spawnCall).join("\n"), /Review the change/);
+  assert.deepEqual(renderText(readCall), ["Delegating the review + 1 tool call"]);
   assert.deepEqual(
     tools.get("subagent_spawn").renderResult(
       { content: [{ type: "text", text: "verbose child output" }], details: {} },
@@ -401,6 +409,39 @@ test("ultra-collapsed view includes subagent tools in one tool-call count", asyn
     ).render(120),
     [],
   );
+});
+
+test("subagent status publishes only children that are still running", () => {
+  let snapshots = [
+    { id: "sa-1", name: "auth-review", status: "running" },
+    { id: "sa-2", name: "finished-test", status: "done" },
+  ];
+  let notify = () => {};
+  const events = [];
+  const disconnect = connectRunningSubagentStatus(
+    { events: { emit: (name, data) => events.push({ name, data }) } },
+    {
+      list: () => snapshots,
+      subscribe(listener) {
+        notify = listener;
+        return () => { notify = () => {}; };
+      },
+    },
+  );
+
+  assert.deepEqual(events.at(-1), {
+    name: "sz-subagents:running",
+    data: { subagents: [{ id: "sa-1", name: "auth-review" }] },
+  });
+
+  snapshots = snapshots.map((snapshot) => ({ ...snapshot, status: "done" }));
+  notify();
+  assert.deepEqual(events.at(-1), {
+    name: "sz-subagents:running",
+    data: { subagents: [] },
+  });
+
+  disconnect();
 });
 
 test("settled subagent messages collapse their returned text", () => {

@@ -4,6 +4,7 @@
  * Shows the default footer info plus:
  * - Token speed (live output tokens/second, finalized for the most recent response)
  * - Git diff stats (+X −Y) centred, when in a repo with uncommitted changes
+ * - A temporary third line naming any running subagents
  *
  * Non-git directories and clean trees fall back to the default footer layout.
  */
@@ -24,6 +25,7 @@ import {
 const STATUS_KEY = "sz-footer";
 const GIT_VIEW_URL_EVENT = "sz-git-view:url";
 const CODEX_RATE_LIMITS_EVENT = "sz-codex-rate-limits:update";
+const SUBAGENTS_RUNNING_EVENT = "sz-subagents:running";
 const GIT_VIEW_URL_GLOBAL_KEY = "__SZ_GIT_VIEW_URL__";
 
 type GlobalWithGitViewUrl = typeof globalThis & {
@@ -40,6 +42,23 @@ function extractGitViewUrl(data: unknown): string | null | undefined {
   const url = (data as { url?: unknown }).url;
   if (url === null) return null;
   return typeof url === "string" && url.length > 0 ? url : undefined;
+}
+
+type RunningSubagent = { id: string; name: string };
+
+function extractRunningSubagents(data: unknown): RunningSubagent[] | undefined {
+  if (!data || typeof data !== "object" || !("subagents" in data)) return undefined;
+  const subagents = (data as { subagents?: unknown }).subagents;
+  if (!Array.isArray(subagents)) return undefined;
+
+  const parsed: RunningSubagent[] = [];
+  for (const subagent of subagents) {
+    if (!subagent || typeof subagent !== "object") return undefined;
+    const { id, name } = subagent as Record<string, unknown>;
+    if (typeof id !== "string" || typeof name !== "string") return undefined;
+    parsed.push({ id, name });
+  }
+  return parsed;
 }
 
 function extractCodexRateLimitWindows(data: unknown): CodexRateLimitWindow[] | undefined {
@@ -169,6 +188,7 @@ export default function (pi: ExtensionAPI) {
   let gitViewUrl: string | null = getGlobalGitViewUrl();
   let codexRateLimitWindows: CodexRateLimitWindow[] | null = null;
   let codexRateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
+  let runningSubagents: RunningSubagent[] = [];
   let rateLimitRefresh: Promise<void> | null = null;
   let requestFooterRender: (() => void) | null = null;
 
@@ -185,6 +205,13 @@ export default function (pi: ExtensionAPI) {
     codexRateLimitWindows = windows;
     codexRateLimitStatus = "ready";
     if (_ctx) installFooter(_ctx);
+  });
+
+  const unsubscribeRunningSubagents = pi.events.on(SUBAGENTS_RUNNING_EVENT, (data) => {
+    const subagents = extractRunningSubagents(data);
+    if (subagents === undefined) return;
+    runningSubagents = subagents;
+    requestFooterRender?.();
   });
 
   function usesChatGptSubscription(ctx: ExtensionContext): boolean {
@@ -222,6 +249,7 @@ export default function (pi: ExtensionAPI) {
     _ctx = ctx;
     gitViewUrl = getGlobalGitViewUrl();
     resetSpeed();
+    runningSubagents = [];
     codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
     codexRateLimitWindows = null;
     installFooter(ctx);
@@ -231,6 +259,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     unsubscribeGitViewUrl();
     unsubscribeCodexRateLimits();
+    unsubscribeRunningSubagents();
     requestFooterRender = null;
     _ctx = null;
   });
@@ -479,7 +508,16 @@ export default function (pi: ExtensionAPI) {
             statsLine = left + pad + right;
           }
 
-          return [pwdLine, truncateToWidth(statsLine, width)];
+          const lines = [pwdLine, truncateToWidth(statsLine, width)];
+          if (runningSubagents.length > 0) {
+            const count = runningSubagents.length;
+            const topics = runningSubagents
+              .map(({ name }) => truncateToWidth(sanitizeStatusText(name), 24, "..."))
+              .join(", ");
+            const label = `${count} subagent${count === 1 ? "" : "s"} running · ${topics}`;
+            lines.push(theme.fg("dim", truncateToWidth(label, width)));
+          }
+          return lines;
         },
       };
     });

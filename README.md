@@ -14,7 +14,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Session transcript copying** through `/copy-all`
 - **Cwd-aware new sessions** through a `/new` TUI selector, with the current cwd preselected and recent project directories ranked next
 - **First-class local search** through `find_files` and `search_text`
-- **Compact tool output** for built-ins, local search, and subagents, with Ctrl+O switching between grouped one-line cards and an ultra-collapsed tool-call count
+- **Compact tool output** for built-ins and local search, with short subagent call lines kept visible without exposing their prompts
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
@@ -70,7 +70,7 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
 
-Built-in file and shell tools, local search tools, and subagent tools do not render result bodies or image previews. Agent reads of `SKILL.md` are the exception: they render as `[skill]` invocations, stay outside tool-call groups, and show the skill body when Ctrl+O expands the transcript. Consecutive skill reads share one highlighted line while collapsed. Press Ctrl+O to switch between the collapsed view (grouped one-line call cards) and the ultra-collapsed view, where other supported tools across separately loaded extensions contribute to the `+ N tool calls` summary attached to their one-line narration. Background subagent completions show one summary line when collapsed and their full returned text when expanded.
+Built-in file and shell tools, local search tools, and subagent tools do not render result bodies or image previews. Agent reads of `SKILL.md` render as highlighted `[skill]` invocation lines outside tool-call groups, but never show the skill body. Consecutive skill reads share one line. Press Ctrl+O to switch between grouped one-line tool cards and the ultra-collapsed `+ N tool calls` summary. Subagent calls always keep a short line with their topic and harness visible, but never show the full delegated prompt. Background subagent completions show one summary line when collapsed and their full returned text when expanded. While children are running, the footer adds a third line with the active count and abbreviated topics; it disappears when all children finish.
 
 Git View and the footer's clickable change count activate only when the current session working directory belongs to a Git repository.
 
