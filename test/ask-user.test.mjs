@@ -3,14 +3,22 @@ import test from "node:test";
 import { getKeybindings } from "@earendil-works/pi-tui";
 import askUserExtension from "../extensions/ask-user.ts";
 
-function setup({ choice, customAnswer, hasUI = true, mode, keys = [], renderWidth = 80 } = {}) {
+function setup({
+  choice,
+  customAnswer,
+  hasUI = true,
+  mode,
+  keys = [],
+  renderWidth = 80,
+  readClipboardForCustomAnswer,
+} = {}) {
   let tool;
   let renderedLines = [];
   const selectCalls = [];
   const inputCalls = [];
   const customCalls = [];
   const pi = { registerTool(definition) { tool = definition; } };
-  askUserExtension(pi);
+  askUserExtension(pi, { readClipboardForCustomAnswer });
   const ctx = {
     hasUI,
     mode,
@@ -21,14 +29,24 @@ function setup({ choice, customAnswer, hasUI = true, mode, keys = [], renderWidt
         customCalls.push(factory);
         let answer;
         const identity = (_color, text) => text;
+        const tuiKeybindings = getKeybindings();
+        const keybindings = {
+          matches(data, action) {
+            if (action === "app.clipboard.pasteImage") return data === "<paste-image>";
+            return tuiKeybindings.matches(data, action);
+          },
+        };
         const component = factory(
           { terminal: { rows: 40 }, requestRender() {} },
           { fg: identity, bg: identity, bold: (text) => text },
-          getKeybindings(),
+          keybindings,
           (value) => { answer = value; },
         );
         component.focused = true;
-        for (const key of keys) component.handleInput(key);
+        for (const key of keys) {
+          component.handleInput(key);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
         renderedLines = component.render(renderWidth);
         return answer;
       },
@@ -112,6 +130,25 @@ test("ask_user accepts typing immediately when the in-place custom answer is hig
     answer: "Use the team preset",
     selectedIndex: undefined,
   });
+});
+
+test("ask_user pastes and attaches a clipboard image to the custom answer", async () => {
+  const imagePath = "C:\\Temp\\pi-clipboard-test.png";
+  const state = setup({
+    keys: ["\x1b[B", "\x1b[B", "<paste-image>", "\r"],
+    readClipboardForCustomAnswer: async () => ({
+      text: imagePath,
+      image: { type: "image", data: "cG5n", mimeType: "image/png" },
+    }),
+  });
+
+  const result = await state.tool.execute("call-image", params, undefined, undefined, state.ctx);
+
+  assert.deepEqual(result.content, [
+    { type: "text", text: `User provided a custom answer: ${imagePath}` },
+    { type: "image", data: "cG5n", mimeType: "image/png" },
+  ]);
+  assert.equal(result.details.answer, imagePath);
 });
 
 test("ask_user wraps the complete in-place custom answer", async () => {

@@ -62,7 +62,7 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 ## Local workflow tools
 
-`ask_user` presents two to five choices and always includes a free-form answer; in the TUI, highlight “Type my own answer” and begin typing immediately. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
+`ask_user` presents two to five choices and always includes a free-form answer. In the TUI, highlight "Type my own answer" and begin typing immediately; Pi's configured clipboard shortcut can paste text or attach an image there. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
 
 `/new` opens a working-directory selector before creating the session. The active session cwd is selected by default; other existing cwds found in session history are deduplicated and ordered by most recent activity.
 

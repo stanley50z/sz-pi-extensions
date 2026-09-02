@@ -1,3 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   Editor,
@@ -43,6 +48,37 @@ const AskUserParameters = Type.Object({
 
 type AskOption = { label: string; description?: string };
 type AskUserInput = { question: string; options: AskOption[] };
+type ClipboardAnswerContent = {
+  text: string;
+  image?: ImageContent;
+};
+type AskUserDependencies = {
+  readClipboardForCustomAnswer?: () => Promise<ClipboardAnswerContent | undefined>;
+};
+
+// The custom answer editor uses this to match Pi's image-paste behavior.
+async function readClipboardForCustomAnswer() {
+  try {
+    const clipboard = await import("@mariozechner/clipboard");
+    if (clipboard.hasImage()) {
+      const bytes = await clipboard.getImageBinary();
+      if (bytes.length === 0) return undefined;
+
+      const filePath = join(tmpdir(), `pi-clipboard-${randomUUID()}.png`);
+      const data = Buffer.from(bytes);
+      await writeFile(filePath, data);
+      return {
+        text: filePath,
+        image: { type: "image" as const, data: data.toString("base64"), mimeType: "image/png" },
+      };
+    }
+
+    const text = await clipboard.getText();
+    return text ? { text } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function result(
   outcome: "selected" | "custom" | "dismissed" | "cancelled" | "no-ui",
@@ -50,9 +86,10 @@ function result(
   text: string,
   answer?: string,
   selectedIndex?: number,
+  images: ImageContent[] = [],
 ) {
   return {
-    content: [{ type: "text" as const, text }],
+    content: [{ type: "text" as const, text }, ...images],
     details: { outcome, question, answer, selectedIndex },
   };
 }
@@ -79,7 +116,13 @@ function validateInput(params: AskUserInput) {
   };
 }
 
-export default function askUserExtension(pi: ExtensionAPI) {
+export default function askUserExtension(
+  pi: ExtensionAPI,
+  dependencies: AskUserDependencies = {},
+) {
+  const readClipboard =
+    dependencies.readClipboardForCustomAnswer ?? readClipboardForCustomAnswer;
+
   pi.registerTool({
     name: "ask_user",
     label: "Ask User",
@@ -113,13 +156,14 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
       let selectedIndex: number;
       let custom: string | undefined;
+      let customImages: ImageContent[] = [];
       const mode = (ctx as { mode?: "tui" | "rpc" | "json" | "print" }).mode;
 
       // Older Pi versions expose hasUI=true only in the TUI and do not provide ctx.mode.
       if (mode === "tui" || mode === undefined) {
         type TuiAnswer =
           | { kind: "selected"; index: number }
-          | { kind: "custom"; answer: string }
+          | { kind: "custom"; answer: string; images: ImageContent[] }
           | null;
 
         const answer = await ctx.ui.custom<TuiAnswer>((tui, theme, keybindings, done) => {
@@ -140,6 +184,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
           let finished = false;
           let cachedWidth: number | undefined;
           let cachedLines: string[] | undefined;
+          const pastedImages: Array<{ path: string; content: ImageContent }> = [];
 
           const finish = (value: TuiAnswer) => {
             if (finished) return;
@@ -159,7 +204,12 @@ export default function askUserExtension(pi: ExtensionAPI) {
 
           editor.onSubmit = (value) => {
             const trimmed = value.trim();
-            if (trimmed) finish({ kind: "custom", answer: trimmed });
+            if (trimmed) {
+              const images = pastedImages
+                .filter((image) => trimmed.includes(image.path))
+                .map((image) => image.content);
+              finish({ kind: "custom", answer: trimmed, images });
+            }
           };
 
           const handleInput = (data: string) => {
@@ -190,6 +240,18 @@ export default function askUserExtension(pi: ExtensionAPI) {
               }
             }
             if (optionIndex === customIndex) {
+              if (keybindings.matches(data, "app.clipboard.pasteImage")) {
+                void readClipboard().then((content) => {
+                  if (!finished && content) {
+                    editor.insertTextAtCursor(content.text);
+                    if (content.image) {
+                      pastedImages.push({ path: content.text, content: content.image });
+                    }
+                    refresh();
+                  }
+                });
+                return;
+              }
               editor.handleInput(data);
               refresh();
               return;
@@ -246,7 +308,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
               theme.fg(
                 "dim",
                 customSelected
-                  ? "Start typing • Enter submit • ↑ choose an option • Esc cancel"
+                  ? "Start typing • Paste shortcut inserts image/text • Enter submit • ↑ options • Esc cancel"
                   : "↑↓ navigate • Enter select • Esc cancel",
               ),
             );
@@ -287,8 +349,10 @@ export default function askUserExtension(pi: ExtensionAPI) {
             "User dismissed the question without choosing an answer.",
           );
         }
-        if (answer.kind === "custom") custom = answer.answer;
-        else selectedIndex = answer.index;
+        if (answer.kind === "custom") {
+          custom = answer.answer;
+          customImages = answer.images;
+        } else selectedIndex = answer.index;
       } else {
         const choice = await ctx.ui.select(
           params.question,
@@ -338,6 +402,8 @@ export default function askUserExtension(pi: ExtensionAPI) {
           params.question,
           `User provided a custom answer: ${custom}`,
           custom,
+          undefined,
+          customImages,
         );
       }
 
