@@ -50,6 +50,13 @@ function encodedPowerShell(script: string): string {
   return Buffer.from(script, "utf16le").toString("base64");
 }
 
+export function buildWindowsProtocolCommand(systemRoot: string, launcherPath: string): string {
+  if (systemRoot.includes('"') || launcherPath.includes('"')) {
+    throw new Error("Windows notification paths cannot contain quotes");
+  }
+  return `"${join(systemRoot, "System32", "wscript.exe")}" //B //Nologo "${launcherPath}" "%1"`;
+}
+
 /** Finds the tab temporarily tagged by the calling Pi session. */
 function captureTerminalWindow(tabMarker: string): Promise<TerminalTarget> {
   const encodedTabMarker = base64Utf8(tabMarker);
@@ -181,15 +188,15 @@ function base64Utf8(value: string): string {
 }
 
 function registerProtocolHandler(): Promise<void> {
-  const helperPath = base64Utf8(fileURLToPath(new URL("./windows-notify-focus.ps1", import.meta.url)));
+  const launcherPath = fileURLToPath(new URL("./windows-notify-launch.vbs", import.meta.url));
+  const command = base64Utf8(buildWindowsProtocolCommand(process.env.SystemRoot ?? "C:\\Windows", launcherPath));
   const script = `
-$helperPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${helperPath}"))
+$command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${command}"))
 $protocolKey = "HKCU:\\Software\\Classes\\pi-notify"
 New-Item $protocolKey -Force | Out-Null
 Set-Item $protocolKey "URL:Pi Notification"
 New-ItemProperty $protocolKey -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
 $commandKey = New-Item "$protocolKey\\shell\\open\\command" -Force
-$command = '"' + (Join-Path $PSHOME "powershell.exe") + '" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $helperPath + '" "%1"'
 Set-Item $commandKey.PSPath $command
 Get-ChildItem $env:TEMP -Filter "pi-notify-*.json" -ErrorAction SilentlyContinue |
   Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-1) } |

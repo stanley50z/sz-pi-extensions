@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWindowsNotifyExtension } from "../extensions/windows-notify.ts";
+import {
+  buildWindowsProtocolCommand,
+  createWindowsNotifyExtension,
+} from "../extensions/windows-notify.ts";
+
+test("notification protocol uses the windowless Windows Script Host", () => {
+  assert.equal(
+    buildWindowsProtocolCommand("C:\\Windows", "C:\\Pi Extensions\\windows-notify-launch.vbs"),
+    '"C:\\Windows\\System32\\wscript.exe" //B //Nologo "C:\\Pi Extensions\\windows-notify-launch.vbs" "%1"',
+  );
+});
 
 function setup({
   platform = "win32",
