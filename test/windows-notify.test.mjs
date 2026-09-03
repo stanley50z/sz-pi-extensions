@@ -98,6 +98,16 @@ test("captures the calling Pi tab even when another terminal tab is selected", a
   assert.deepEqual(state.terminalTitles, ["Pi notification target test", "Pi - Notification work"]);
 });
 
+test("native Pi subagents do not install notification hooks", async () => {
+  const state = setup();
+
+  await state.handlers.get("session_start")({}, { ...state.ctx, mode: "print" });
+
+  assert.equal(state.handlers.has("agent_start"), false);
+  assert.equal(state.handlers.has("agent_settled"), false);
+  assert.equal(state.handlers.has("ui_prompt_start"), false);
+});
+
 test("a completed background tab posts a persistent notification without taking focus", async () => {
   const state = setup({ terminalState: "background" });
   await state.handlers.get("session_start")({}, state.ctx);

@@ -549,6 +549,22 @@ export function createWindowsNotifyExtension(
       reportedError = false;
       if (ctx.mode !== "tui") return;
 
+      pi.on("agent_start", () => {
+        agentRunning = true;
+      });
+
+      pi.on("agent_settled", async (_event, ctx) => {
+        if (!agentRunning) return;
+        agentRunning = false;
+        await dispatch(ctx, "Response finished");
+      });
+
+      pi.on("ui_prompt_start", async (event, ctx) => {
+        if (!agentRunning) return;
+        const prompt = event.title?.trim();
+        await dispatch(ctx, prompt ? `Input needed: ${prompt}` : "Input needed");
+      });
+
       try {
         await deps.registerProtocolHandler();
       } catch (error) {
@@ -564,22 +580,6 @@ export function createWindowsNotifyExtension(
       } finally {
         ctx.ui.setTitle(formatTerminalTitle(pi.getSessionName()));
       }
-    });
-
-    pi.on("agent_start", () => {
-      agentRunning = true;
-    });
-
-    pi.on("agent_settled", async (_event, ctx) => {
-      if (!agentRunning) return;
-      agentRunning = false;
-      await dispatch(ctx, "Response finished");
-    });
-
-    pi.on("ui_prompt_start", async (event, ctx) => {
-      if (!agentRunning) return;
-      const prompt = event.title?.trim();
-      await dispatch(ctx, prompt ? `Input needed: ${prompt}` : "Input needed");
     });
 
     pi.on("session_shutdown", () => {
