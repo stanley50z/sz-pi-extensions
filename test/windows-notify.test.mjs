@@ -55,8 +55,8 @@ function setup({
     setTabAttention(active) {
       attentionSignals.push(active);
     },
-    watchTabActivation(target, onActive) {
-      activationWatchers.push({ target, onActive });
+    watchTabActivation(target, onActive, onError) {
+      activationWatchers.push({ target, onActive, onError });
       return () => {};
     },
   });
@@ -152,6 +152,41 @@ test("a completed inactive tab uses a transient toast and a Terminal attention r
 
   state.activationWatchers[0].onActive();
   assert.deepEqual(state.attentionSignals, [true, false]);
+});
+
+test("a stale Windows Terminal tab target is recaptured without showing a PowerShell error", async () => {
+  const state = setup({
+    targets: [
+      { windowHandle: 101, tabRuntimeId: [42, 7] },
+      { windowHandle: 101, tabRuntimeId: [84, 9] },
+    ],
+  });
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+  await state.handlers.get("agent_settled")({}, state.ctx);
+
+  await state.activationWatchers[0].onError(new Error(
+    "#< CLIXML ... The Pi terminal tab no longer exists ...",
+  ));
+
+  assert.deepEqual(state.capturedTitles, [
+    "Pi notification target test",
+    "Pi notification target test",
+  ]);
+  assert.deepEqual(state.notifications.at(-1), {
+    title: "Pi - Notification work",
+    body: "Response finished",
+    windowHandle: 101,
+    tabRuntimeId: [84, 9],
+    persistent: true,
+    activationUri: "pi-notify://focus/test-token",
+  });
+  assert.deepEqual(state.dismissedNotifications, [state.notifications[0]]);
+  assert.deepEqual(state.uiNotifications, []);
+  assert.deepEqual(state.activationWatchers.at(-1).target, {
+    windowHandle: 101,
+    tabRuntimeId: [84, 9],
+  });
 });
 
 test("a completed active tab uses a normal transient notification", async () => {

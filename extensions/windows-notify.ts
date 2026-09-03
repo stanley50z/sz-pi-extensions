@@ -504,10 +504,49 @@ export function createWindowsNotifyExtension(
       ctx.ui.notify(`Windows notification failed: ${detail}`, "error");
     }
 
-    async function dispatch(ctx: ExtensionContext, body: string): Promise<void> {
-      if (ctx.mode !== "tui" || terminalTarget === undefined) return;
+    function isStaleTabTarget(error: unknown): boolean {
+      const detail = error instanceof Error ? error.message : String(error);
+      return detail.includes("The Pi terminal tab no longer exists");
+    }
+
+    async function captureTarget(ctx: ExtensionContext): Promise<TerminalTarget> {
+      const tabMarker = deps.createTabMarker();
+      ctx.ui.setTitle(tabMarker);
       try {
-        const state = await deps.getTerminalState(terminalTarget);
+        return await deps.captureTerminalWindow(tabMarker);
+      } finally {
+        ctx.ui.setTitle(formatTerminalTitle(pi.getSessionName()));
+      }
+    }
+
+    async function recoverStaleTarget(
+      ctx: ExtensionContext,
+      body: string,
+      staleTarget: TerminalTarget,
+    ): Promise<void> {
+      if (terminalTarget !== staleTarget) return;
+      cancelNotification?.();
+      cancelNotification = undefined;
+      cancelActivationWatch?.();
+      cancelActivationWatch = undefined;
+      terminalTarget = undefined;
+      try {
+        terminalTarget = await captureTarget(ctx);
+        await dispatch(ctx, body, false);
+      } catch (error) {
+        reportError(ctx, error);
+      }
+    }
+
+    async function dispatch(
+      ctx: ExtensionContext,
+      body: string,
+      canRecapture = true,
+    ): Promise<void> {
+      if (ctx.mode !== "tui" || terminalTarget === undefined) return;
+      const target = terminalTarget;
+      try {
+        const state = await deps.getTerminalState(target);
         if (state === "foreground-inactive" && !attentionActive) {
           attentionActive = true;
           deps.setTabAttention(true);
@@ -516,17 +555,17 @@ export function createWindowsNotifyExtension(
         const dismissNotification = deps.showNotification({
           title: `Pi - ${pi.getSessionName()?.trim() || "Untitled session"}`,
           body,
-          ...terminalTarget,
+          ...target,
         }, {
           persistent: state === "background",
-          activationUri: deps.createActivationUri(terminalTarget),
+          activationUri: deps.createActivationUri(target),
         }, (error) => reportError(ctx, error));
         cancelNotification = dismissNotification;
 
         cancelActivationWatch?.();
         cancelActivationWatch = undefined;
         if (state !== "foreground-active") {
-          cancelActivationWatch = deps.watchTabActivation(terminalTarget, () => {
+          cancelActivationWatch = deps.watchTabActivation(target, () => {
             cancelActivationWatch = undefined;
             if (state === "background") {
               dismissNotification();
@@ -536,9 +575,19 @@ export function createWindowsNotifyExtension(
               attentionActive = false;
               deps.setTabAttention(false);
             }
-          }, (error) => reportError(ctx, error));
+          }, async (error) => {
+            if (isStaleTabTarget(error)) {
+              await recoverStaleTarget(ctx, body, target);
+              return;
+            }
+            reportError(ctx, error);
+          });
         }
       } catch (error) {
+        if (canRecapture && isStaleTabTarget(error)) {
+          await recoverStaleTarget(ctx, body, target);
+          return;
+        }
         reportError(ctx, error);
       }
     }
@@ -571,14 +620,10 @@ export function createWindowsNotifyExtension(
         reportError(ctx, error);
       }
 
-      const tabMarker = deps.createTabMarker();
-      ctx.ui.setTitle(tabMarker);
       try {
-        terminalTarget = await deps.captureTerminalWindow(tabMarker);
+        terminalTarget = await captureTarget(ctx);
       } catch (error) {
         reportError(ctx, error);
-      } finally {
-        ctx.ui.setTitle(formatTerminalTitle(pi.getSessionName()));
       }
     });
 
