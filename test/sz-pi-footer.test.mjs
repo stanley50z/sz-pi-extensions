@@ -36,12 +36,6 @@ async function createCleanRepo() {
   return dir;
 }
 
-async function createDirtyRepo() {
-  const dir = await createCleanRepo();
-  await writeFile(join(dir, 'file.txt'), 'after\n', 'utf8');
-  return dir;
-}
-
 function createFakePi() {
   const handlers = new Map();
   const busHandlers = new Map();
@@ -104,6 +98,9 @@ const plainTheme = {
   fg(_color, text) {
     return text;
   },
+  underline(text) {
+    return text;
+  },
 };
 
 function createFooterData(branch = null, statuses = new Map(), providerCount = 1) {
@@ -150,6 +147,7 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
 
     installFooterExtension(pi);
     await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+    pi.events.emit('sz-git-view:update', { summary: { added: 0, deleted: 0, files: [] } });
     let now = 1000;
     Date.now = () => now;
     await pi.handlers.get('turn_start')({}, ctx);
@@ -551,78 +549,94 @@ test('long cwd and branch push the session name right instead of forcing it to c
   }
 });
 
-test('footer renders clickable zero diff stats in a clean git repository', async () => {
-  const originalCwd = process.cwd();
-  const repo = await createCleanRepo();
-  process.chdir(repo);
+test('footer shows Git diff totals supplied by the TUI viewer', async () => {
+  const { default: installFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext();
 
-  try {
-    const { default: installFooterExtension } = await freshFooterModule();
-    const pi = createFakePi();
-    const ctx = createFakeContext({ cwd: repo });
-    const url = 'http://127.0.0.1:61589';
+  installFooterExtension(pi);
+  await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+  pi.events.emit('sz-git-view:update', {
+    summary: { added: 8, deleted: 3, files: [{ path: 'changed.txt', added: 8, deleted: 3 }] },
+  });
 
-    installFooterExtension(pi);
-    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
-    pi.events.emit('sz-git-view:url', { url });
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  const lines = footer.render(120);
 
-    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
-    const lines = footer.render(120);
-
-    assert.match(lines[1], /\+0\s+−0/);
-    assert.match(lines[1], new RegExp(`\\x1b\\]8;;${url}\\x1b\\\\`));
-  } finally {
-    process.chdir(originalCwd);
-  }
+  assert.match(lines[1], /\+8\s+−3/);
+  assert.equal(lines.length, 2);
 });
 
-test('footer hides Git changes when the session cwd is outside a repository', async () => {
-  const originalCwd = process.cwd();
-  const repo = await createDirtyRepo();
-  const nonRepo = await mkdtemp(join(tmpdir(), 'sz-pi-footer-non-repo-'));
-  process.chdir(repo);
+test('footer hides Git changes outside a repository', async () => {
+  const { default: installFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext();
 
-  try {
-    const { default: installFooterExtension } = await freshFooterModule();
-    const pi = createFakePi();
-    const ctx = createFakeContext({ cwd: nonRepo });
-    const url = 'http://127.0.0.1:61589';
+  installFooterExtension(pi);
+  await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+  pi.events.emit('sz-git-view:update', { summary: null });
 
-    installFooterExtension(pi);
-    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
-    pi.events.emit('sz-git-view:url', { url });
-
-    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
-    const lines = footer.render(120);
-
-    assert.doesNotMatch(lines[1], /\+\d+\s+−\d+/);
-    assert.doesNotMatch(lines[1], /\x1b\]8;;/);
-  } finally {
-    process.chdir(originalCwd);
-  }
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  assert.doesNotMatch(footer.render(120)[1], /\+\d+\s+−\d+/);
 });
 
-test('footer git diff stats become a hyperlink to the Git View URL when it is available', async () => {
-  const originalCwd = process.cwd();
-  const repo = await createDirtyRepo();
-  process.chdir(repo);
+test('clicking Git diff totals expands the five most changed files and clicking again collapses them', async () => {
+  const { default: installFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext();
+  let renderRequests = 0;
 
-  try {
-    const { default: installFooterExtension } = await freshFooterModule();
-    const pi = createFakePi();
-    const ctx = createFakeContext({ cwd: repo });
-    const url = 'http://127.0.0.1:61589';
+  installFooterExtension(pi);
+  await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+  pi.events.emit('sz-git-view:update', {
+    summary: {
+      added: 29,
+      deleted: 18,
+      files: [
+        { path: 'sixth.txt', added: 3, deleted: 2 },
+        { path: 'third.txt', added: 8, deleted: 0 },
+        { path: 'largest.txt', added: 10, deleted: 2 },
+        { path: 'fifth.txt', added: 6, deleted: 0 },
+        { path: 'second.txt', added: 5, deleted: 4 },
+        { path: 'fourth.txt', added: 4, deleted: 3 },
+      ],
+    },
+  });
 
-    installFooterExtension(pi);
-    await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
-    pi.events.emit('sz-git-view:url', { url });
+  const footer = ctx.footerFactory(
+    { requestRender() { renderRequests++; } },
+    plainTheme,
+    footerData,
+  );
+  const collapsed = footer.render(120);
+  const diffX = stripVTControlCharacters(collapsed[1]).indexOf('+29');
+  assert.ok(diffX >= 0);
 
-    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
-    const lines = footer.render(120);
+  footer.handleMouse({
+    type: 'click', button: 'left', x: diffX, y: 1,
+    screenX: diffX, screenY: 1, width: 120, height: 2,
+    shift: false, alt: false, ctrl: false, clickCount: 1,
+  });
 
-    assert.match(lines[1], /\+1\s+−1/);
-    assert.match(lines[1], new RegExp(`\\x1b\\]8;;${url}\\x1b\\\\`));
-  } finally {
-    process.chdir(originalCwd);
-  }
+  const expanded = footer.render(120).map(stripVTControlCharacters);
+  assert.deepEqual(
+    expanded.slice(2).map((line) => line.trim()),
+    [
+      'largest.txt  +10 -2',
+      'second.txt  +5 -4',
+      'third.txt  +8 -0',
+      'fourth.txt  +4 -3',
+      'fifth.txt  +6 -0',
+    ],
+  );
+  assert.doesNotMatch(expanded.join('\n'), /sixth\.txt/);
+  assert.equal(renderRequests, 1);
+
+  footer.handleMouse({
+    type: 'click', button: 'left', x: diffX, y: 1,
+    screenX: diffX, screenY: 1, width: 120, height: 7,
+    shift: false, alt: false, ctrl: false, clickCount: 1,
+  });
+  assert.equal(footer.render(120).length, 2);
+  assert.equal(renderRequests, 2);
 });

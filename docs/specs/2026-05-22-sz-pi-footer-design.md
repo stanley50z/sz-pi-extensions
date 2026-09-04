@@ -10,7 +10,9 @@
 - Align the right-hand status sections with the editor divider's right edge, with no trailing footer padding: this supersedes the earlier request for padding after token speed.
 - Keep token speed visible after generation completes: explicitly requested as “the token speed should stay on and retain the last value when the generation is done, instead of disappearing.”
 - Preserve the default-style usage/cost/context/model footer information: requested by comparing against pi's default footer and asking for similar richer footer behavior.
-- Show git diff stats centered in the footer and clickable when Git View provides a URL: requested as part of the Git View/footer integration.
+- Show git diff stats centered in the footer. Clicking the totals expands the footer downward with per-file added and deleted line counts.
+- Show at most five files, ordered by total lines changed, when more than five files have changes.
+- Keep the Git Diff Viewer inside Pi's TUI and do not start a localhost web server.
 - Show extension statuses on the right side of the stats line: requested through the fast-mode/status integration work.
 - Show both five-hour and weekly ChatGPT subscription usage in the center of the second line: requested after restoring subscription visibility; unavailable windows remain visible with an em dash.
 - Keep the calculated API-equivalent cost at three significant figures, remove the redundant `(sub)` suffix, and show `API` in the center when API-key billing is active instead of subscription usage.
@@ -40,8 +42,9 @@
 - Center git diff stats and ChatGPT subscription usage when there is enough room, otherwise omit the centered segment and preserve left/right stats: serves layout robustness under narrow widths.
 - Format subscription usage as `5h:<percent> wk:<percent>`; use `—` when Codex does not provide a window, `…` while loading, and `!` when retrieval fails. For API-key authentication, place `API` in the same centered slot instead.
 - Read limits from Codex app-server's `account/rateLimits/read` method on session start, model selection, and completed turns: serves current ChatGPT subscription usage without exposing credentials.
-- Use OSC-8 hyperlinks for git diff stats when a Git View URL is available: serves quick navigation from footer to Git View.
-- Refresh footer on `thinking_level_select` and after file-changing tool executions (`bash`, `edit`, `write`): serves timely updates for reasoning level and git diff stats.
+- Underline the centered diff totals so they read as interactive, handle left-clicks in fullscreen mode, and append compact file rows below the normal footer lines.
+- Sort expanded file rows by `added + deleted`, then by path for stable ties, and render only the first five.
+- Refresh Git diff data after completed turns and file-changing tool executions (`bash`, `edit`, `write`).
 
 ## Component Responsibilities
 
@@ -52,12 +55,24 @@ The footer extension owns all runtime behavior for installing and refreshing the
 Responsibilities:
 
 - Subscribe to session lifecycle events and install the footer on session start.
-- Track the active Git View URL from the extension event bus.
+- Track the current Git diff summary from the extension event bus.
 - Fetch ChatGPT subscription windows through the Codex app-server protocol and track updates from the extension event bus.
 - Track assistant-message generation timing, estimate live output token speed during streaming, and finalize it from provider-reported output usage.
-- Read git diff shortstat from the current repository.
-- Render the two-line footer with width-aware truncation and padding.
+- Render the normal two-line footer plus optional width-bounded file summary rows.
+- Toggle the file rows when the user clicks the centered diff totals in fullscreen mode.
 - Preserve compatibility with optional pi APIs by checking method availability before calling newer methods.
+
+### `extensions/sz-git-view/`
+
+The Git Diff Viewer collector owns repository inspection and update events.
+
+Responsibilities:
+
+- Read tracked line counts from `git diff --numstat HEAD` and staged counts before the first commit.
+- Count untracked text-file lines as additions.
+- Publish `sz-git-view:update` on session start, completed turns, and file-changing tool completion.
+- Publish `null` outside Git repositories and during session shutdown.
+- Start no server, socket, timer, or browser.
 
 ### `lib/codex-rate-limits.ts`
 
@@ -80,28 +95,29 @@ Responsibilities:
 - Verify first-line path, branch, session name, and token speed layout.
 - Verify token speed persists after footer refresh.
 - Verify short locations keep session names centered while long paths and branches push them right only when needed.
-- Verify git diff stats are shown and hyperlinked when Git View URL is known.
+- Verify git diff totals are shown, clicking expands and collapses file rows, and only the five most changed files appear.
 - Verify five-hour and weekly subscription usage is centered and a missing five-hour window renders as `—`.
 - Verify API-key sessions show centered `API`, omit subscription limits, format cost to three significant figures, and never show `(sub)`.
 - Verify the compact OpenAI provider, model, reasoning, and fast-mode labels in the bottom-right segment.
 
 ## Data Flow
 
-1. `session_start` stores the extension context, refreshes the Git View URL, resets token speed, installs the footer, and starts a subscription-limit read for ChatGPT-authenticated OpenAI Codex models.
+1. `session_start` stores the extension context, reads the latest Git diff summary, resets token speed, installs the footer, and starts a subscription-limit read for ChatGPT-authenticated OpenAI Codex models.
 2. The rate-limit client initializes Codex app-server, calls `account/rateLimits/read`, validates its windows, and emits `sz-codex-rate-limits:update`.
 3. `message_start` records when the provider begins the assistant response, excluding request latency before the stream starts.
 4. `message_update` requests a footer render and shows a live average speed. It uses cumulative provider-reported output usage when available, otherwise pi's conservative token estimate for the partial assistant message.
 5. `message_end` replaces the live estimate with the authoritative provider-reported output-token total divided by assistant generation time; `turn_end` remains a compatibility fallback and refreshes subscription limits.
-6. Git View emits `sz-git-view:url`; the footer stores the URL and reinstalls itself so future renders hyperlink diff stats.
+6. Git Diff Viewer emits `sz-git-view:update` with repository totals and per-file counts. The footer requests a render without opening a server or browser.
 7. Footer `render(width)` builds line 1 from left-aligned cwd/branch, a preferably centered session name clamped to avoid overlap, and right-aligned live/last speed or `0 tok/s`.
 8. Footer `render(width)` builds line 2 from cumulative usage, three-significant-figure cost, integer `ctx:<percent>%`, centered git plus subscription usage or `API`, model/provider/reasoning, and extension statuses.
-9. Width calculations use `visibleWidth()` and `truncateToWidth()` so wide Unicode and ANSI styling do not exceed terminal width.
+9. When expanded, footer `render(width)` appends up to five files sorted by total changed lines, with `+N -N` counts.
+10. Width calculations use `visibleWidth()` and `truncateToWidth()` so wide Unicode and ANSI styling do not exceed terminal width.
 
 ## Error Handling
 
 - Git commands are wrapped in `try/catch`; non-git directories or command failures return no diff stats instead of failing footer rendering.
 - Missing optional APIs (`getEntries`, `getCwd`, `getSessionName`, `getContextUsage`, `getAvailableProviderCount`) fall back to older available values.
-- Empty or malformed Git View URL events are ignored; explicit `null` clears the URL.
+- Empty or malformed Git diff summary events are ignored; explicit `null` hides the viewer and collapses its file rows.
 - Token speed is not overwritten by zero-token or invalid elapsed-time turns; missing speed renders as `0 tok/s`. Live values are estimates until provider-reported usage arrives at message end.
 - Status text is sanitized before rendering to prevent multi-line footer output.
 - Codex protocol, timeout, and validation failures render both limit slots as `!`; a legitimately absent window renders as `—`.
@@ -109,7 +125,7 @@ Responsibilities:
 ## Testing Strategy
 
 - Use Node's built-in test runner.
-- Use temporary git repositories to test clean and dirty diff stats.
+- Use temporary git repositories to test tracked, untracked, and pre-first-commit diff stats.
 - Use fake pi objects to drive lifecycle events without launching interactive pi.
 - Use a fake JSONL app-server process to verify the real initialize/request protocol boundary.
 - Assert rendered strings rather than implementation details.
@@ -120,5 +136,5 @@ Responsibilities:
 
 - Do not display `/resume` fallback previews as session names; only explicit session names are shown.
 - Do not persist token speed across sessions.
-- Do not replace Git View; only link to it when its URL is available.
+- Do not show code diffs, commit history, branches, or worktrees.
 - Do not attempt to perfectly mirror pi's internal default footer implementation; preserve the user-visible information needed for this extension stack.

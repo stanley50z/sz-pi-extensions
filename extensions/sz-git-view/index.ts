@@ -1,114 +1,46 @@
-// extensions/sz-git-view/index.ts
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createGitViewServer } from "./server.ts";
-import { collectAll, getDiffForPath, resolveGitRoot } from "./collector.ts";
-import type { GitData } from "./collector.ts";
-import { getHtmlTemplate } from "./template.ts";
+import { collectDiffSummary, type GitDiffSummary } from "./collector.ts";
 
-const GIT_VIEW_URL_EVENT = "sz-git-view:url";
-const GIT_VIEW_URL_GLOBAL_KEY = "__SZ_GIT_VIEW_URL__";
+export const GIT_VIEW_UPDATE_EVENT = "sz-git-view:update";
+export const GIT_VIEW_SUMMARY_GLOBAL_KEY = "__SZ_GIT_VIEW_SUMMARY__";
 
-type GlobalWithGitViewUrl = typeof globalThis & {
-  [GIT_VIEW_URL_GLOBAL_KEY]?: string | null;
+type GlobalWithGitViewSummary = typeof globalThis & {
+  [GIT_VIEW_SUMMARY_GLOBAL_KEY]?: GitDiffSummary | null;
 };
 
-function publishGitViewUrl(pi: ExtensionAPI, url: string | null) {
-  (globalThis as GlobalWithGitViewUrl)[GIT_VIEW_URL_GLOBAL_KEY] = url;
-  pi.events.emit(GIT_VIEW_URL_EVENT, { url });
+function sessionCwd(ctx: ExtensionContext): string {
+  return typeof ctx.sessionManager.getCwd === "function"
+    ? ctx.sessionManager.getCwd()
+    : ctx.cwd;
 }
 
-export default async function (pi: ExtensionAPI) {
-  const server = createGitViewServer();
-  let port: number | null = null;
+function publishSummary(pi: ExtensionAPI, summary: GitDiffSummary | null): void {
+  (globalThis as GlobalWithGitViewSummary)[GIT_VIEW_SUMMARY_GLOBAL_KEY] = summary;
+  pi.events.emit(GIT_VIEW_UPDATE_EVENT, { summary });
+}
+
+export default function (pi: ExtensionAPI) {
   let ctx: ExtensionContext | null = null;
-  let repoRoot: string | null = null;
 
-  // ── Client → Server message handler ─────────────────────────────────
-  server.onMessage = (type, payload) => {
-    if (type === "get-diff" && payload?.path && repoRoot) {
-      const diff = getDiffForPath(payload.path, repoRoot);
-      server.broadcast({ type: "diff", path: payload.path, content: diff || "" });
-    } else if (type === "load-more") {
-      // Re-broadcast full data (client already has it; future: pagination)
-      pushData();
-    }
-  };
-
-  server.onClientConnect = () => {
-    pushData();
-  };
-
-  // ── Push data to all connected clients ──────────────────────────────
-  function pushData() {
-    if (!server || port === null || !repoRoot) return;
-    try {
-      const data: GitData = collectAll(repoRoot);
-      const payload: any = {
-        type: "full",
-        repoName: data.repoName,
-        commits: data.commits,
-        status: data.status,
-        worktrees: data.worktrees,
-        error: data.error || null,
-      };
-      server.broadcast(payload);
-    } catch (err: any) {
-      server.broadcast({ type: "full", error: "Failed to collect git data: " + err.message });
-    }
+  function refresh(): void {
+    publishSummary(pi, ctx ? collectDiffSummary(sessionCwd(ctx)) : null);
   }
 
-  // ── Server lifecycle ────────────────────────────────────────────────
-  pi.on("session_start", async (_event, extensionCtx) => {
+  pi.on("session_start", (_event, extensionCtx) => {
     ctx = extensionCtx;
-    const sessionCwd = typeof ctx.sessionManager?.getCwd === "function"
-      ? ctx.sessionManager.getCwd()
-      : ctx.cwd;
-    repoRoot = resolveGitRoot(sessionCwd);
-    if (!repoRoot) {
-      publishGitViewUrl(pi, null);
-      return;
-    }
-    try {
-      const template = getHtmlTemplate();
-      port = await server.start(template);
-      const url = `http://127.0.0.1:${port}`;
-      publishGitViewUrl(pi, url);
-      if (ctx.ui?.notify) {
-        ctx.ui.notify(
-          `Git view: ${url}`,
-          "info"
-        );
-      }
-      // Push initial data after a short delay to let the client connect
-      setTimeout(() => pushData(), 1000);
-    } catch (err: any) {
-      repoRoot = null;
-      publishGitViewUrl(pi, null);
-      if (ctx.ui?.notify) {
-        ctx.ui.notify(`Git view failed: ${err.message}`, "error");
-      }
+    refresh();
+  });
+
+  pi.on("tool_execution_end", (event) => {
+    if (event.toolName === "bash" || event.toolName === "edit" || event.toolName === "write") {
+      refresh();
     }
   });
 
-  pi.on("session_shutdown", async () => {
-    server.stop();
-    port = null;
-    repoRoot = null;
-    publishGitViewUrl(pi, null);
-  });
+  pi.on("turn_end", refresh);
 
-  // ── Auto-refresh on relevant events ─────────────────────────────────
-  pi.on("turn_end", async () => {
-    pushData();
-  });
-
-  pi.on("tool_execution_end", async (event) => {
-    if (
-      event.toolName === "bash" ||
-      event.toolName === "edit" ||
-      event.toolName === "write"
-    ) {
-      pushData();
-    }
+  pi.on("session_shutdown", () => {
+    ctx = null;
+    publishSummary(pi, null);
   });
 }

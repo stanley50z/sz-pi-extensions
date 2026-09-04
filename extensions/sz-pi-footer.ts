@@ -3,10 +3,9 @@
  *
  * Shows the default footer info plus:
  * - Token speed (live output tokens/second, finalized for the most recent response)
- * - Git diff stats (+X −Y) centred, when in a repo with uncommitted changes
- * - A temporary third line naming any running subagents
- *
- * Non-git directories and clean trees fall back to the default footer layout.
+ * - Clickable Git diff stats (+X −Y) centred when the session is in a repository
+ * - Up to five changed files below the footer when the Git stats are expanded
+ * - A temporary line naming any running subagents
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -15,33 +14,49 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { hyperlink, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { execFileSync } from "node:child_process";
+import { truncateToWidth, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   readCodexRateLimits,
   type CodexRateLimitWindow,
 } from "../lib/codex-rate-limits.ts";
+import type { GitDiffSummary } from "./sz-git-view/collector.ts";
+import {
+  GIT_VIEW_SUMMARY_GLOBAL_KEY,
+  GIT_VIEW_UPDATE_EVENT,
+} from "./sz-git-view/index.ts";
 
-const STATUS_KEY = "sz-footer";
-const GIT_VIEW_URL_EVENT = "sz-git-view:url";
 const CODEX_RATE_LIMITS_EVENT = "sz-codex-rate-limits:update";
 const SUBAGENTS_RUNNING_EVENT = "sz-subagents:running";
-const GIT_VIEW_URL_GLOBAL_KEY = "__SZ_GIT_VIEW_URL__";
 
-type GlobalWithGitViewUrl = typeof globalThis & {
-  [GIT_VIEW_URL_GLOBAL_KEY]?: string | null;
+type GlobalWithGitViewSummary = typeof globalThis & {
+  [GIT_VIEW_SUMMARY_GLOBAL_KEY]?: GitDiffSummary | null;
 };
 
-function getGlobalGitViewUrl(): string | null {
-  const url = (globalThis as GlobalWithGitViewUrl)[GIT_VIEW_URL_GLOBAL_KEY];
-  return typeof url === "string" && url.length > 0 ? url : null;
+function getGlobalGitViewSummary(): GitDiffSummary | null {
+  return (globalThis as GlobalWithGitViewSummary)[GIT_VIEW_SUMMARY_GLOBAL_KEY] ?? null;
 }
 
-function extractGitViewUrl(data: unknown): string | null | undefined {
-  if (!data || typeof data !== "object" || !("url" in data)) return undefined;
-  const url = (data as { url?: unknown }).url;
-  if (url === null) return null;
-  return typeof url === "string" && url.length > 0 ? url : undefined;
+function extractGitViewSummary(data: unknown): GitDiffSummary | null | undefined {
+  if (!data || typeof data !== "object" || !("summary" in data)) return undefined;
+  const summary = (data as { summary?: unknown }).summary;
+  if (summary === null) return null;
+  if (!summary || typeof summary !== "object") return undefined;
+
+  const candidate = summary as Partial<GitDiffSummary>;
+  if (
+    typeof candidate.added !== "number" ||
+    typeof candidate.deleted !== "number" ||
+    !Array.isArray(candidate.files) ||
+    candidate.files.some((file) =>
+      !file ||
+      typeof file.path !== "string" ||
+      typeof file.added !== "number" ||
+      typeof file.deleted !== "number"
+    )
+  ) {
+    return undefined;
+  }
+  return candidate as GitDiffSummary;
 }
 
 type RunningSubagent = { id: string; name: string };
@@ -97,33 +112,6 @@ function formatCodexRateLimits(
     return window ? `${Math.round(window.usedPercent)}%` : "—";
   };
   return `5h:${percentageFor(300)} wk:${percentageFor(10080)}`;
-}
-
-// ── git diff helpers ──────────────────────────────────────────────────
-
-function getDiffStats(cwd: string): string | null {
-  try {
-    execFileSync("git", ["-C", cwd, "rev-parse", "--git-dir"], {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 3000,
-    });
-
-    const out = execFileSync("git", ["-C", cwd, "diff", "--shortstat", "HEAD"], {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 3000,
-    }).trim();
-
-    const added = out.match(/(\d+) insertions?\(\+\)/);
-    const deleted = out.match(/(\d+) deletions?\(-\)/);
-    const a = added ? Number(added[1]) : 0;
-    const d = deleted ? Number(deleted[1]) : 0;
-
-    return `+${a} −${d}`;
-  } catch {
-    return null;
-  }
 }
 
 // ── formatting helpers ────────────────────────────────────────────────
@@ -185,18 +173,20 @@ function resetSpeed() {
 
 export default function (pi: ExtensionAPI) {
   let _ctx: ExtensionContext | null = null;
-  let gitViewUrl: string | null = getGlobalGitViewUrl();
+  let gitDiffSummary = getGlobalGitViewSummary();
+  let gitDetailsExpanded = false;
   let codexRateLimitWindows: CodexRateLimitWindow[] | null = null;
   let codexRateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
   let runningSubagents: RunningSubagent[] = [];
   let rateLimitRefresh: Promise<void> | null = null;
   let requestFooterRender: (() => void) | null = null;
 
-  const unsubscribeGitViewUrl = pi.events.on(GIT_VIEW_URL_EVENT, (data) => {
-    const nextUrl = extractGitViewUrl(data);
-    if (nextUrl === undefined) return;
-    gitViewUrl = nextUrl;
-    if (_ctx) installFooter(_ctx);
+  const unsubscribeGitView = pi.events.on(GIT_VIEW_UPDATE_EVENT, (data) => {
+    const summary = extractGitViewSummary(data);
+    if (summary === undefined) return;
+    gitDiffSummary = summary;
+    if (summary === null) gitDetailsExpanded = false;
+    requestFooterRender?.();
   });
 
   const unsubscribeCodexRateLimits = pi.events.on(CODEX_RATE_LIMITS_EVENT, (data) => {
@@ -247,7 +237,8 @@ export default function (pi: ExtensionAPI) {
   // ── store context ──────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
     _ctx = ctx;
-    gitViewUrl = getGlobalGitViewUrl();
+    gitDiffSummary = getGlobalGitViewSummary();
+    gitDetailsExpanded = false;
     resetSpeed();
     runningSubagents = [];
     codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
@@ -257,7 +248,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
-    unsubscribeGitViewUrl();
+    unsubscribeGitView();
     unsubscribeCodexRateLimits();
     unsubscribeRunningSubagents();
     requestFooterRender = null;
@@ -359,6 +350,7 @@ export default function (pi: ExtensionAPI) {
       const renderFooter = () => tui.requestRender();
       requestFooterRender = renderFooter;
       const unsub = footerData.onBranchChange(renderFooter);
+      let diffHitbox: { start: number; end: number; row: number } | null = null;
 
       return {
         dispose() {
@@ -366,7 +358,24 @@ export default function (pi: ExtensionAPI) {
           if (requestFooterRender === renderFooter) requestFooterRender = null;
         },
         invalidate() {},
+        handleMouse(event: TuiMouseEvent) {
+          if (
+            event.type !== "click" ||
+            event.button !== "left" ||
+            !diffHitbox ||
+            event.y !== diffHitbox.row ||
+            event.x < diffHitbox.start ||
+            event.x >= diffHitbox.end
+          ) {
+            return undefined;
+          }
+
+          gitDetailsExpanded = !gitDetailsExpanded;
+          tui.requestRender();
+          return { handled: true, render: false };
+        },
         render(width: number): string[] {
+          diffHitbox = null;
           // ── line 1: cwd, git branch, session name, token speed ─────
           const outputTokensPerSec = liveOutputTokensPerSec ?? lastOutputTokensPerSec;
           const speedText = outputTokensPerSec !== null && outputTokensPerSec > 0
@@ -468,16 +477,16 @@ export default function (pi: ExtensionAPI) {
           const rightText = `${providerPrefix}${modelName} @${reasoningLevel}${statusText}`;
           const right = theme.fg("dim", rightText);
 
-          // ── centred git diff and subscription usage ──────────────
+          // ── centred Git diff and subscription usage ──────────────
           const centreParts: string[] = [];
-          const diff = getDiffStats(cwd);
-          if (diff) {
-            const coloured = diff.replace(
-              /^(\+\d+)\s+(−\d+)$/,
-              (_, adds: string, dels: string) =>
-                theme.fg("success", adds) + " " + theme.fg("dim", " ") + theme.fg("error", dels),
+          let colouredDiff = "";
+          if (gitDiffSummary) {
+            colouredDiff = theme.underline(
+              theme.fg("success", `+${gitDiffSummary.added}`) +
+              "  " +
+              theme.fg("error", `−${gitDiffSummary.deleted}`),
             );
-            centreParts.push(gitViewUrl ? hyperlink(coloured, gitViewUrl) : coloured);
+            centreParts.push(colouredDiff);
           }
           const rateLimitsText = formatCodexRateLimits(codexRateLimitStatus, codexRateLimitWindows);
           if (usingSubscription && rateLimitsText) {
@@ -499,6 +508,10 @@ export default function (pi: ExtensionAPI) {
               const padLeft = Math.floor((available - centreW) / 2);
               const padRight = available - centreW - padLeft;
               statsLine = left + " ".repeat(padLeft) + centre + " ".repeat(padRight) + right;
+              if (colouredDiff) {
+                const start = leftW + padLeft;
+                diffHitbox = { start, end: start + visibleWidth(colouredDiff), row: 1 };
+              }
             } else {
               const pad = " ".repeat(Math.max(2, width - leftW - rightW));
               statsLine = left + pad + right;
@@ -509,6 +522,30 @@ export default function (pi: ExtensionAPI) {
           }
 
           const lines = [pwdLine, truncateToWidth(statsLine, width)];
+          if (gitDetailsExpanded && gitDiffSummary) {
+            const mostChanged = [...gitDiffSummary.files]
+              .sort((a, b) =>
+                (b.added + b.deleted) - (a.added + a.deleted) || a.path.localeCompare(b.path)
+              )
+              .slice(0, 5);
+            for (const file of mostChanged) {
+              const counts = `+${file.added} -${file.deleted}`;
+              const countsWidth = visibleWidth(counts);
+              if (width <= countsWidth + 4) {
+                lines.push(truncateToWidth(theme.fg("success", counts), width, ""));
+                continue;
+              }
+              const path = truncateToWidth(file.path, width - countsWidth - 4, "...");
+              lines.push(
+                "  " +
+                theme.fg("dim", path) +
+                "  " +
+                theme.fg("success", `+${file.added}`) +
+                " " +
+                theme.fg("error", `-${file.deleted}`),
+              );
+            }
+          }
           if (runningSubagents.length > 0) {
             const count = runningSubagents.length;
             const topics = runningSubagents

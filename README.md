@@ -72,7 +72,7 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 
 Built-in file and shell tools, local search tools, and subagent tools do not render result bodies or image previews. Agent reads of `SKILL.md` render as highlighted `[skill]` invocation lines outside tool-call groups, but never show the skill body. Consecutive skill reads share one line. Press Ctrl+O to switch between grouped one-line tool cards and the ultra-collapsed `+ N tool calls` summary. Subagent calls always keep a short line with their topic and harness visible, but never show the full delegated prompt. Background subagent completions show one summary line when collapsed and their full returned text when expanded. While children are running, the footer adds a third line with the active count and abbreviated topics; it disappears when all children finish.
 
-Git View and the footer's clickable change count activate only when the current session working directory belongs to a Git repository.
+The Git Diff Viewer activates when the session working directory belongs to a Git repository. Click the underlined, centered `+X −Y` footer totals in fullscreen mode to show or hide up to five files, ordered by total lines changed. The viewer runs entirely in Pi's TUI and does not start a localhost server.
 
 ## Manual skill invocation
 

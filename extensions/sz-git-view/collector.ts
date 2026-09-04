@@ -1,177 +1,72 @@
-// extensions/sz-git-view/collector.ts
 import { execFileSync } from "node:child_process";
-import { basename } from "node:path";
-import { parseGitLog, parseGitStatus, parseGitWorktree } from "./git-parsers.ts";
-import type { CommitNode, StatusEntry, WorktreeEntry } from "./git-parsers.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-export interface GitData {
-  repoName: string;
-  commits: CommitNode[];
-  status: StatusEntry[];
-  worktrees: WorktreeEntry[];
-  error?: string;
+export interface GitDiffFile {
+  path: string;
+  added: number;
+  deleted: number;
+}
+
+export interface GitDiffSummary {
+  added: number;
+  deleted: number;
+  files: GitDiffFile[];
 }
 
 const GIT_TIMEOUT = 3000;
-const COMMIT_COUNT = 30;
 
-function runGit(args: string[], cwd: string, timeout = GIT_TIMEOUT): string {
+function runGit(args: string[], cwd: string): string {
   return execFileSync("git", ["-C", cwd, ...args], {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
-    timeout,
+    timeout: GIT_TIMEOUT,
     maxBuffer: 1024 * 1024,
   });
 }
 
-export function resolveGitRoot(cwd: string): string | null {
-  try {
-    return runGit(["rev-parse", "--show-toplevel"], cwd).trim() || null;
-  } catch {
-    return null;
+function countTextLines(path: string): number {
+  const content = readFileSync(path);
+  if (content.includes(0) || content.length === 0) return 0;
+
+  let lines = content.at(-1) === 10 ? 0 : 1;
+  for (const byte of content) {
+    if (byte === 10) lines++;
   }
+  return lines;
 }
 
-export function collectAll(cwd = process.cwd()): GitData {
-  const repoRoot = resolveGitRoot(cwd);
-  if (!repoRoot) {
+export function collectDiffSummary(cwd: string): GitDiffSummary | null {
+  try {
+    const repoRoot = runGit(["rev-parse", "--show-toplevel"], cwd).trim();
+    let output: string;
+    try {
+      output = runGit(["diff", "--numstat", "HEAD", "--"], repoRoot);
+    } catch {
+      output = runGit(["diff", "--numstat", "--cached", "--"], repoRoot);
+    }
+    const files = output.trim()
+      ? output.trimEnd().split("\n").map((line) => {
+          const [added, deleted, ...pathParts] = line.split("\t");
+          return {
+            path: pathParts.join("\t"),
+            added: added === "-" ? 0 : Number(added),
+            deleted: deleted === "-" ? 0 : Number(deleted),
+          };
+        })
+      : [];
+    const untracked = runGit(["ls-files", "--others", "--exclude-standard", "-z"], repoRoot)
+      .split("\0")
+      .filter(Boolean)
+      .map((path) => ({ path, added: countTextLines(join(repoRoot, path)), deleted: 0 }));
+    files.push(...untracked);
+
     return {
-      repoName: "",
-      commits: [],
-      status: [],
-      worktrees: [],
-      error: "Not a git repository",
+      added: files.reduce((total, file) => total + file.added, 0),
+      deleted: files.reduce((total, file) => total + file.deleted, 0),
+      files,
     };
-  }
-
-  const repoName = getRepoName(repoRoot);
-  const commits = collectCommits(repoRoot);
-  const status = collectStatus(repoRoot);
-  const worktrees = collectWorktrees(repoRoot);
-
-  return { repoName, commits, status, worktrees };
-}
-
-export function getDiffForPath(filePath: string, cwd = process.cwd()): string | null {
-  try {
-    return runGit(["diff", "--", filePath], cwd, 5000);
   } catch {
     return null;
-  }
-}
-
-function getRepoName(repoRoot: string): string {
-  try {
-    const remote = runGit(["remote", "get-url", "origin"], repoRoot).trim();
-    const match = remote.match(/[\\/]([^\\/]+?)(?:\.git)?$/);
-    if (match) return match[1];
-  } catch { /* no remote */ }
-  return basename(repoRoot) || "unknown";
-}
-
-function collectCommits(repoRoot: string): CommitNode[] {
-  try {
-    const out = runGit([
-      "log",
-      "--all",
-      "--topo-order",
-      "--parents",
-      "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%ar%x1f%D%x1f%P%x1f%s%x1f%b%x1e",
-      `-${COMMIT_COUNT}`,
-    ], repoRoot).trim();
-    if (!out) return [];
-
-    const commits = parseGitLog(out);
-    assignLanes(commits);
-    return commits;
-  } catch {
-    return [];
-  }
-}
-
-function collectStatus(repoRoot: string): StatusEntry[] {
-  try {
-    const out = runGit(["status", "--porcelain", "-uall"], repoRoot);
-    return out.trim() ? parseGitStatus(out) : [];
-  } catch {
-    return [];
-  }
-}
-
-function collectWorktrees(repoRoot: string): WorktreeEntry[] {
-  try {
-    const out = runGit(["worktree", "list", "--porcelain"], repoRoot).trim();
-    // git worktree list includes the primary checkout first. The panel should
-    // only show linked side worktrees, not the main repository checkout.
-    return out ? parseGitWorktree(out).slice(1) : [];
-  } catch {
-    return [];
-  }
-}
-
-// ── Lane Assignment Algorithm ─────────────────────────────────────────
-
-const BRANCH_COLORS = [
-  "#3498db", "#2ecc71", "#e74c3c", "#f39c12", "#9b59b6",
-  "#1abc9c", "#e67e22", "#e91e63", "#00bcd4", "#8bc34a",
-];
-
-function assignLanes(commits: CommitNode[]): void {
-  if (commits.length === 0) return;
-
-  // Map full hash -> CommitNode for quick lookup
-  const hashMap = new Map<string, CommitNode>();
-  for (const c of commits) hashMap.set(c.fullHash, c);
-
-  // Populate children from parents
-  for (const c of commits) {
-    for (const p of c.parents) {
-      const parent = hashMap.get(p);
-      if (parent) parent.children.push(c.fullHash);
-    }
-  }
-
-  // Assign lanes: process newest to oldest
-  const lanes: (string | null)[] = []; // lane index -> reserved commit hash
-  const laneColors: string[] = [];
-  let colorIdx = 0;
-
-  for (const commit of commits) {
-    // Find existing lane for this commit (if it was reserved by a child)
-    let assignedLane = lanes.findIndex(l => l === commit.fullHash);
-
-    if (assignedLane === -1) {
-      // New branch — find a free lane
-      assignedLane = lanes.findIndex(l => l === null);
-      if (assignedLane === -1) {
-        // No free lane, add a new one
-        assignedLane = lanes.length;
-        lanes.push(null);
-        laneColors.push(BRANCH_COLORS[colorIdx % BRANCH_COLORS.length]);
-        colorIdx++;
-      }
-    }
-
-    // Free this lane and reserve it for the first parent
-    lanes[assignedLane] = commit.parents[0] || null;
-
-    // For additional parents (merge), reserve their lanes from children
-    for (let i = 1; i < commit.parents.length; i++) {
-      const parentHash = commit.parents[i];
-      let parentLane = lanes.findIndex(l => l === parentHash);
-      if (parentLane === -1) {
-        parentLane = lanes.findIndex(l => l === null);
-        if (parentLane === -1) {
-          parentLane = lanes.length;
-          lanes.push(null);
-          laneColors.push(BRANCH_COLORS[colorIdx % BRANCH_COLORS.length]);
-          colorIdx++;
-        }
-      }
-      lanes[parentLane] = parentHash;
-    }
-
-    commit.lane = assignedLane;
-    commit.color = laneColors[assignedLane];
   }
 }
