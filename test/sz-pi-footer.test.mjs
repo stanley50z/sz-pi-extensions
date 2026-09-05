@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -121,6 +121,113 @@ function createFooterData(branch = null, statuses = new Map(), providerCount = 1
 }
 
 const footerData = createFooterData();
+
+test('Copilot monthly usage refreshes through footer events and stays separate from session cost', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'footer-copilot-'));
+  const previousDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = dir;
+  t.after(async () => {
+    if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousDir;
+    await rm(dir, { recursive: true, force: true });
+  });
+  await writeFile(join(dir, 'auth.json'), JSON.stringify({ 'github-copilot': { type: 'oauth', refresh: 'test-token' } }));
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', (url, options) => new Promise(resolve => requests.push({ options, resolve })));
+  const date = new Date();
+  const response = credits => Response.json({ token_based_billing: true,
+    quota_reset_date_utc: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString(),
+    quota_snapshots: { premium_interactions: { credits_used: credits } },
+  });
+  const { default: install } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({ usingSubscription: true,
+    model: { provider: 'github-copilot', id: 'gpt-test' },
+    branch: [{ type: 'message', message: { role: 'assistant', usage: { input: 1, output: 1, cost: { total: 0.123 } } } }],
+  });
+  const line = context => context.footerFactory({ requestRender() {} }, plainTheme, footerData).render(160)[1];
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  install(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  assert.match(line(ctx), /Copilot month:…/);
+  assert.equal(requests.length, 1);
+  requests[0].resolve(response(4393));
+  await settle();
+  assert.match(line(ctx), /\$0\.123.*Copilot month:\$43\.93/);
+  const clock = t.mock.method(Date, 'now', () => Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
+  assert.match(line(ctx), /Copilot month:unavailable/);
+  clock.mock.restore();
+  await pi.handlers.get('turn_end')({ message: { role: 'user' } }, ctx);
+  await settle();
+  assert.equal(requests.length, 1);
+  await writeFile(join(dir, 'auth.json'), JSON.stringify({ 'github-copilot': { type: 'oauth', refresh: 'second-account' } }));
+  await pi.handlers.get('model_select')({}, ctx);
+  assert.equal(requests.length, 2);
+  const other = createFakeContext();
+  await pi.handlers.get('model_select')({}, other);
+  assert.equal(requests[1].options.signal.aborted, true);
+  requests[1].resolve(response(9000));
+  await settle();
+  assert.doesNotMatch(line(other), /Copilot/);
+  assert.match(line(other), /API/);
+  await pi.handlers.get('model_select')({}, ctx);
+  assert.equal(requests.length, 3);
+  requests[2].resolve(Response.json({}));
+  await settle();
+  assert.match(line(ctx), /Copilot month:unavailable/);
+  await writeFile(join(dir, 'auth.json'), JSON.stringify({ 'github-copilot': { type: 'oauth', refresh: 'third-account' } }));
+  await pi.handlers.get('turn_end')({ message: { role: 'user' } }, ctx);
+  await pi.handlers.get('session_shutdown')({}, ctx);
+  assert.equal(requests[3].options.signal.aborted, true);
+  requests[3].resolve(response(100));
+  await settle();
+});
+
+for (const change of ['replace', 'remove']) {
+  test(`Copilot footer invalidates cached usage on auth ${change} without a lifecycle event`, async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'footer-copilot-auth-'));
+    const previousDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = dir;
+    t.after(async () => {
+      if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousDir;
+      await rm(dir, { recursive: true, force: true });
+    });
+    const authPath = join(dir, 'auth.json');
+    await writeFile(authPath, JSON.stringify({ 'github-copilot': { type: 'oauth', refresh: 'first-account' } }));
+    let calls = 0;
+    const date = new Date();
+    t.mock.method(globalThis, 'fetch', async () => {
+      calls++;
+      return Response.json({ token_based_billing: true,
+        quota_reset_date_utc: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString(),
+        quota_snapshots: { premium_interactions: { credits_used: 4393 } },
+      });
+    });
+    const { default: install } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext({ usingSubscription: true,
+      model: { provider: 'github-copilot', id: 'gpt-test' },
+    });
+    install(pi);
+    t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+    await pi.handlers.get('session_start')({}, ctx);
+    await new Promise(resolve => setImmediate(resolve));
+    const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+    assert.match(footer.render(160)[1], /Copilot month:\$43\.93/);
+    if (change === 'replace') {
+      await writeFile(authPath, JSON.stringify({ 'github-copilot': { type: 'oauth', refresh: 'second-account' } }));
+    } else {
+      await rm(authPath);
+    }
+    for (let i = 0; i < 3; i++) {
+      assert.match(footer.render(160)[1], /Copilot month:unavailable/);
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+  });
+}
 
 test('footer preserves original lines and adds custom stats/statuses', async () => {
   const originalCwd = process.cwd();

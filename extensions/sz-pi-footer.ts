@@ -20,6 +20,7 @@ import {
   type CodexRateLimitWindow,
 } from "../lib/codex-rate-limits.ts";
 import type { GitDiffSummary } from "./sz-git-view/collector.ts";
+import { createCopilotUsageReader } from "../lib/copilot-usage.ts";
 import {
   GIT_VIEW_SUMMARY_GLOBAL_KEY,
   GIT_VIEW_UPDATE_EVENT,
@@ -180,6 +181,29 @@ export default function (pi: ExtensionAPI) {
   let runningSubagents: RunningSubagent[] = [];
   let rateLimitRefresh: Promise<void> | null = null;
   let requestFooterRender: (() => void) | null = null;
+  const copilotUsage = createCopilotUsageReader();
+  let copilotText = "Copilot month:…";
+  let copilotMonth = "";
+  let copilotGeneration = 0;
+
+  // Refresh account usage on the existing footer events; ignore obsolete model results.
+  function refreshCopilotUsage(ctx: ExtensionContext): void {
+    const generation = ++copilotGeneration;
+    if (ctx.model?.provider !== "github-copilot" || !ctx.modelRegistry?.isUsingOAuth?.(ctx.model)) {
+      copilotUsage.cancel();
+      copilotText = "Copilot month:unavailable";
+      return;
+    }
+    copilotText = "Copilot month:…";
+    void copilotUsage.read().then((usage) => {
+      if (generation !== copilotGeneration || !_ctx || _ctx.model?.provider !== "github-copilot") return;
+      copilotMonth = new Date(Date.now()).toISOString().slice(0, 7);
+      copilotText = usage.status === "ready"
+        ? `Copilot month:$${usage.usd.toFixed(2)}`
+        : "Copilot month:unavailable";
+      requestFooterRender?.();
+    });
+  }
 
   const unsubscribeGitView = pi.events.on(GIT_VIEW_UPDATE_EVENT, (data) => {
     const summary = extractGitViewSummary(data);
@@ -243,11 +267,14 @@ export default function (pi: ExtensionAPI) {
     runningSubagents = [];
     codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
     codexRateLimitWindows = null;
+    refreshCopilotUsage(ctx);
     installFooter(ctx);
     refreshCodexRateLimits(ctx);
   });
 
   pi.on("session_shutdown", async () => {
+    copilotGeneration++;
+    copilotUsage.dispose();
     unsubscribeGitView();
     unsubscribeCodexRateLimits();
     unsubscribeRunningSubagents();
@@ -305,6 +332,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("model_select", async (_event, ctx) => {
+    _ctx = ctx;
+    refreshCopilotUsage(ctx);
     codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
     codexRateLimitWindows = null;
     installFooter(ctx);
@@ -312,6 +341,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", async (_event, ctx) => {
+    _ctx = ctx;
+    refreshCopilotUsage(ctx);
     // Compatibility fallback for runtimes that do not emit assistant message
     // lifecycle events. Current runtimes finalize from message_end instead so
     // provider wait time and tool execution are excluded from generation speed.
@@ -489,7 +520,13 @@ export default function (pi: ExtensionAPI) {
             centreParts.push(colouredDiff);
           }
           const rateLimitsText = formatCodexRateLimits(codexRateLimitStatus, codexRateLimitWindows);
-          if (usingSubscription && rateLimitsText) {
+          if (ctx.model?.provider === "github-copilot") {
+            const usage = copilotUsage.peek();
+            const text = copilotText.startsWith("Copilot month:$") &&
+              (usage.status !== "ready" || copilotMonth !== new Date(Date.now()).toISOString().slice(0, 7))
+              ? "Copilot month:unavailable" : copilotText;
+            centreParts.push(theme.fg("dim", text));
+          } else if (usingSubscription && rateLimitsText) {
             centreParts.push(theme.fg("dim", rateLimitsText));
           } else if (!usingSubscription) {
             centreParts.push(theme.fg("dim", "API"));

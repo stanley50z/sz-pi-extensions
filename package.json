@@ -23,7 +23,7 @@
     ]
   },
   "dependencies": {
-    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/1dfc46e.tar.gz",
+    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/77ce0f259ab8b03adf007ca6e0b22df94fa4dfc1.tar.gz",
     "linkedom": "^0.16.11",
     "typebox": "*"
   },
