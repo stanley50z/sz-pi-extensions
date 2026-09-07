@@ -421,7 +421,9 @@ export default function (pi: ExtensionAPI) {
             ? ctx.sessionManager.getCwd()
             : ctx.cwd;
           let pwd = compactPath(cwd);
-          const branch = footerData.getGitBranch();
+          // Pi reads HEAD directly, even from incomplete .git metadata. Only
+          // show its branch after the Git collector confirms a repository.
+          const branch = gitDiffSummary ? footerData.getGitBranch() : null;
           if (branch) pwd = `${pwd} (${branch})`;
           const sessionName = typeof ctx.sessionManager.getSessionName === "function"
             ? ctx.sessionManager.getSessionName()

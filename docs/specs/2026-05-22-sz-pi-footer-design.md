@@ -23,7 +23,7 @@
 - Use a two-line footer: serves the requirements to show path/session/speed plus usage/model/diff details without overcrowding one line. Line 1 contains location/session/speed; line 2 contains usage, diff, model, reasoning, and statuses.
 - Use `ctx.sessionManager.getCwd()` when available and fall back to `ctx.cwd`: serves accurate resumed-session display because session cwd can differ from process cwd.
 - Compact the home directory to `~`: serves readable cwd display and matches pi footer conventions.
-- Append branch as `(<branch>)` after cwd: serves branch visibility while keeping the format familiar.
+- Append branch as `(<branch>)` after cwd only while the Git Diff Viewer supplies a non-null repository summary. Pi reads `.git/HEAD` directly and can return a branch from incomplete metadata that Git rejects; use the collector's repository check for both branch and diff visibility.
 - Start the session name at the geometric center when that does not overlap cwd/branch or token speed; otherwise clamp it between those segments, allowing a long location to push it right.
 - Treat pi “session name” as only the explicit `/name` or `pi.setSessionName()` value: serves correctness with pi's session model; `/resume` fallback previews are not shown as names.
 - Format token speed as `<n> tok/s`, rounded to an integer at 100+ tok/s and one decimal below 100 tok/s, with `0 tok/s` before any measured assistant response: serves compact display and initial-session visibility.
@@ -93,6 +93,7 @@ Responsibilities:
 
 - Verify two-line rendering and default-style stats/status preservation.
 - Verify first-line path, branch, session name, and token speed layout.
+- Verify leftover `.git/HEAD` metadata cannot display a branch when Git rejects the directory as a repository.
 - Verify token speed persists after footer refresh.
 - Verify short locations keep session names centered while long paths and branches push them right only when needed.
 - Verify git diff totals are shown, clicking expands and collapses file rows, and only the five most changed files appear.

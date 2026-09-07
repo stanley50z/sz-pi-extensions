@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -672,6 +672,33 @@ test('footer shows Git diff totals supplied by the TUI viewer', async () => {
 
   assert.match(lines[1], /\+8\s+−3/);
   assert.equal(lines.length, 2);
+});
+
+test('footer hides a branch from leftover Git metadata outside a valid repository', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'sz-pi-footer-invalid-git-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(join(dir, '.git'));
+  await writeFile(join(dir, '.git', 'HEAD'), 'ref: refs/heads/master\n');
+  assert.throws(() => git(['rev-parse', '--show-toplevel'], dir));
+
+  const { FooterDataProvider } = await import(new URL(
+    'core/footer-data-provider.js', import.meta.resolve('@earendil-works/pi-coding-agent'),
+  ));
+  const data = new FooterDataProvider(dir);
+  t.after(() => data.dispose());
+  const { default: installGitView } = await import('../extensions/sz-git-view/index.ts');
+  const { default: install } = await freshFooterModule();
+  const ctx = createFakeContext({ cwd: dir });
+  const pi = createFakePi();
+  installGitView(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  install(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, data);
+  t.after(() => footer.dispose());
+  assert.doesNotMatch(footer.render(160)[0], /\(master\)/);
 });
 
 test('footer hides Git changes outside a repository', async () => {
