@@ -69,6 +69,57 @@ function createTuiContext(cwd, inputs, sessionCwd = cwd) {
   };
 }
 
+test("/neww starts a native new session without listing directories or opening the cwd selector", async () => {
+  const { default: newSessionCwd } = await loadExtension();
+  const pi = createFakePi();
+  newSessionCwd(pi);
+
+  let started = false;
+  const ctx = {
+    mode: "tui",
+    ui: { custom() { assert.fail("/neww must not open the cwd selector"); } },
+    async newSession() {
+      const result = await pi.handlers.get("session_before_switch")({ reason: "new" }, ctx);
+      assert.equal(result, undefined);
+      started = true;
+      return { cancelled: false };
+    },
+  };
+  const command = pi.commands.get("neww");
+  assert.ok(command, "/neww should be registered");
+  await command.handler("", ctx);
+  assert.equal(started, true);
+  assert.deepEqual(pi.sentUserMessages, []);
+});
+
+for (const outcome of ["cancelled", "error"]) {
+  test(`/new still opens the selector after /neww ends with ${outcome}`, async () => {
+    const { createNewSessionCwdExtension } = await loadExtension();
+    const pi = createFakePi();
+    createNewSessionCwdExtension({
+      listSessions: async () => [],
+      cwdExists: () => true,
+      schedule: () => assert.fail("should not schedule a cwd switch"),
+      createSessionFile: () => assert.fail("should use the native new-session flow"),
+    })(pi);
+
+    const ctx = createTuiContext(process.cwd(), ["\r"]);
+    ctx.newSession = async () => {
+      assert.equal(await pi.handlers.get("session_before_switch")({ reason: "new" }, ctx), undefined);
+      if (outcome === "error") throw new Error("session creation failed");
+      return { cancelled: true };
+    };
+
+    const result = pi.commands.get("neww").handler("", ctx);
+    if (outcome === "error") await assert.rejects(result, /session creation failed/);
+    else await result;
+    assert.equal(ctx.renders.length, 0);
+
+    await pi.handlers.get("session_before_switch")({ reason: "new" }, ctx);
+    assert.ok(ctx.renders.length > 0, "/new must still open the cwd selector");
+  });
+}
+
 test("/new preselects the current cwd and ranks the remaining cwd choices by session recency", async () => {
   const { createNewSessionCwdExtension } = await loadExtension();
   const current = "C:\\work\\current";

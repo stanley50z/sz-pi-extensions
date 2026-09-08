@@ -102,9 +102,23 @@ function hasTui(ctx: ExtensionContext): boolean {
   return mode === undefined ? ctx.hasUI : mode === "tui";
 }
 
+// Adds the /new cwd selector and /neww to use the native current-cwd flow directly.
 export function createNewSessionCwdExtension(deps: NewSessionCwdDependencies) {
   return function newSessionCwdExtension(pi: ExtensionAPI) {
     let pendingCwd: string | undefined;
+    let skipCwdSelector = false;
+
+    pi.registerCommand("neww", {
+      description: "Start a new session in the current cwd without the directory selector",
+      handler: async (_args, ctx) => {
+        skipCwdSelector = true;
+        try {
+          await ctx.newSession();
+        } finally {
+          skipCwdSelector = false;
+        }
+      },
+    });
 
     pi.on("session_start", (_event, ctx) => {
       if (!hasTui(ctx)) return;
@@ -147,7 +161,7 @@ export function createNewSessionCwdExtension(deps: NewSessionCwdDependencies) {
     });
 
     pi.on("session_before_switch", async (event, ctx) => {
-      if (event.reason !== "new" || !hasTui(ctx)) return;
+      if (event.reason !== "new" || skipCwdSelector || !hasTui(ctx)) return;
 
       const currentCwd = ctx.sessionManager.getCwd();
       const choices = rankCwdChoices(currentCwd, await deps.listSessions(), deps.cwdExists);
