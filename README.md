@@ -82,6 +82,10 @@ The footer reads Pi's existing GitHub Copilot OAuth `refresh` credential from th
 
 Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill-name` with any additional instructions. While a `$skill` or `/skill:` completion is available, Enter accepts it without submitting, just like Tab; press Enter again to send the completed prompt. A loaded `$skill-name` mention at the start or within a prompt invokes the same Pi skill expansion as `/skill:skill-name`; unknown `$name` text is left unchanged.
 
+The input's top-right `[ commit ]` button submits `$commit` without changing your draft. Clicks work in fullscreen mode; when Pi is busy, the commit is queued as a follow-up. In regular scrollback mode, type `$commit` instead.
+
+Invoking `$commit` or `/skill:commit` switches reasoning to `low` before skill expansion. Reading the loaded commit skill through the agent's `read` tool also switches to `low`. Reasoning stays low afterward until changed; non-reasoning models remain `off`.
+
 ## Skill suites
 
 Run `/ss` to open a multi-select panel. Move with ↑/↓, press Space to toggle suites independently, then press Enter to apply. Each suite can control both skill paths and registered Pi tool names.

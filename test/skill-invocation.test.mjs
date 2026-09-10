@@ -12,6 +12,8 @@ function createFakePi() {
   const handlers = new Map();
   return {
     handlers,
+    thinkingLevel: 'high',
+    setThinkingLevel(level) { this.thinkingLevel = level; },
     on(event, handler) {
       handlers.set(event, handler);
     },
@@ -19,7 +21,7 @@ function createFakePi() {
       return [
         { name: 'skill:tdd', description: 'Test-driven development', source: 'skill' },
         { name: 'skill:research', description: 'Research a topic', source: 'skill' },
-        { name: 'skill:commit', description: 'Commit and push changes', source: 'skill' },
+        { name: 'skill:commit', description: 'Commit and push changes', source: 'skill', sourceInfo: { path: 'C:/skills/commit/SKILL.md' } },
         { name: 'review', description: 'Review prompt', source: 'prompt' },
         { name: 'fast', description: 'Toggle fast mode', source: 'extension' },
       ];
@@ -33,6 +35,34 @@ async function install() {
   installSkillInvocation(pi);
   return pi;
 }
+
+test('commit invocation switches reasoning to low before expansion and leaves it there', async () => {
+  for (const text of ['$commit', 'please $commit now', '/skill:commit', '/skill:commit staged only']) {
+    const pi = await install();
+    pi.handlers.get('input')({ text });
+    assert.equal(pi.thinkingLevel, 'low', text);
+    pi.handlers.get('input')({ text: 'next task' });
+    assert.equal(pi.thinkingLevel, 'low');
+  }
+});
+
+test('agent reading the loaded commit skill switches reasoning before the read', async () => {
+  const pi = await install();
+  const handler = pi.handlers.get('tool_call');
+  assert.ok(handler);
+  handler({ toolName: 'read', input: { path: 'C:/other/commit/SKILL.md' } }, { cwd: 'C:/' });
+  assert.equal(pi.thinkingLevel, 'high');
+  handler({ toolName: 'read', input: { path: 'C:/skills/commit/SKILL.md' } }, { cwd: 'C:/' });
+  assert.equal(pi.thinkingLevel, 'low');
+});
+
+test('other skills and ordinary commit discussion preserve reasoning', async () => {
+  for (const text of ['$tdd', '/skill:commit-extra', 'explain commit', '`$commit`']) {
+    const pi = await install();
+    pi.handlers.get('input')({ text });
+    assert.equal(pi.thinkingLevel, 'high', text);
+  }
+});
 
 async function createEditorHarness() {
   const pi = await install();
