@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import {
   CustomEditor,
   type ExtensionAPI,
@@ -140,19 +138,8 @@ function firstLoadedSkillMention(pi: ExtensionAPI, text: string): SkillMention |
   return undefined;
 }
 
-/** Expands skill mentions and applies commit's low-reasoning policy before use. */
+/** Expands skill mentions and lowers reasoning for explicit commit invocations, not agent skill reads. */
 export default function skillInvocationExtension(pi: ExtensionAPI): void {
-  pi.on("tool_call", (event, ctx) => {
-    if (event.toolName !== "read" || typeof event.input.path !== "string") return;
-    const commit = pi.getCommands().find(
-      (command) => command.source === "skill" && skillName(command.name) === "commit",
-    );
-    if (!commit) return;
-    const path = event.input.path.replace(/^@/, "").replace(/^~(?=[/\\])/, homedir());
-    if (resolve(ctx.cwd, path) === resolve(ctx.cwd, commit.sourceInfo.path)) {
-      pi.setThinkingLevel("low");
-    }
-  });
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.addAutocompleteProvider((current) => createSkillAutocompleteProvider(pi, current));
     const previousFactory = ctx.ui.getEditorComponent?.();

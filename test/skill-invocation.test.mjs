@@ -46,14 +46,11 @@ test('commit invocation switches reasoning to low before expansion and leaves it
   }
 });
 
-test('agent reading the loaded commit skill switches reasoning before the read', async () => {
+test('agent reading the loaded commit skill preserves reasoning', async () => {
   const pi = await install();
   const handler = pi.handlers.get('tool_call');
-  assert.ok(handler);
-  handler({ toolName: 'read', input: { path: 'C:/other/commit/SKILL.md' } }, { cwd: 'C:/' });
+  await handler?.({ toolName: 'read', input: { path: 'C:/skills/commit/SKILL.md' } }, { cwd: 'C:/' });
   assert.equal(pi.thinkingLevel, 'high');
-  handler({ toolName: 'read', input: { path: 'C:/skills/commit/SKILL.md' } }, { cwd: 'C:/' });
-  assert.equal(pi.thinkingLevel, 'low');
 });
 
 test('other skills and ordinary commit discussion preserve reasoning', async () => {
