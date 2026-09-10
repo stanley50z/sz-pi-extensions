@@ -35,6 +35,9 @@ public static class PiNotificationFocus {
 "@
 
   if (-not [PiNotificationFocus]::IsWindow($window)) { throw 'The Pi terminal window no longer exists' }
+  if ([PiNotificationFocus]::IsIconic($window)) {
+    [PiNotificationFocus]::ShowWindowAsync($window, 9) | Out-Null
+  }
   if ($targetRuntimeId.Count -gt 0) {
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($window)
     $condition = New-Object System.Windows.Automation.PropertyCondition(
@@ -55,17 +58,36 @@ public static class PiNotificationFocus {
       throw 'The Pi terminal tab cannot be selected'
     }
     $selection.Select()
-    $targetTab.SetFocus()
   }
 
-  if ([PiNotificationFocus]::IsIconic($window)) {
-    [PiNotificationFocus]::ShowWindowAsync($window, 9) | Out-Null
-  }
   $flags = 0x0001 -bor 0x0002
   $front = [PiNotificationFocus]::SetWindowPos($window, [IntPtr]::new(-1), 0, 0, 0, 0, $flags)
   $front = [PiNotificationFocus]::SetWindowPos($window, [IntPtr]::new(-2), 0, 0, 0, 0, $flags) -and $front
   $focused = [PiNotificationFocus]::SetForegroundWindow($window)
   if (-not $front -or -not $focused) { throw 'Windows refused to focus the Pi terminal window' }
+
+  # Selecting a tab and foregrounding its window do not focus the terminal input.
+  # Wait for the selected tab's visible text area after selection/window restore.
+  if ($targetRuntimeId.Count -gt 0) {
+    $documentCondition = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Document
+    )
+    $inputFocused = $false
+    for ($attempt = 0; $attempt -lt 20 -and -not $inputFocused; $attempt++) {
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($window)
+      $documents = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $documentCondition)
+      foreach ($document in $documents) {
+        $current = $document.Current
+        if ($current.IsOffscreen -or -not $current.IsEnabled -or -not $current.IsKeyboardFocusable) { continue }
+        if (-not $current.HasKeyboardFocus) { $document.SetFocus() }
+        $inputFocused = $document.Current.HasKeyboardFocus
+        break
+      }
+      if (-not $inputFocused) { Start-Sleep -Milliseconds 50 }
+    }
+    if (-not $inputFocused) { throw 'Windows Terminal did not give keyboard focus to the terminal text area' }
+  }
 } finally {
   if ($null -ne $statePath) { Remove-Item $statePath -Force -ErrorAction SilentlyContinue }
 }
