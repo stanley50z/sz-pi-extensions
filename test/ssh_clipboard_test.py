@@ -91,7 +91,70 @@ class RequestBoundsTest(unittest.TestCase):
                 server.server_close()
 
 
+@unittest.skipUnless(__import__('os').name == 'nt', 'Windows PowerShell profile integration')
+class ShellAliasTest(unittest.TestCase):
+    def test_only_bare_ssh_mac_uses_the_clipboard_launcher(self):
+        import json
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            script = pathlib.Path(directory) / 'profile-test.ps1'
+            profile = str(ROOT / 'profile.ps1').replace("'", "''")
+            # Stand in for the two native commands, not the profile function under test.
+            script.write_text(
+                "$ErrorActionPreference = 'Stop'\n. '" + profile + "'\n"
+                "function python { @{ command = 'python'; arguments = @($args) } | ConvertTo-Json -Compress; $global:LASTEXITCODE = 7 }\n"
+                "function ssh.exe { @{ command = 'ssh.exe'; arguments = @($args) } | ConvertTo-Json -Compress; $global:LASTEXITCODE = 7 }\n"
+                "ssh @args\nexit $LASTEXITCODE\n", encoding='utf-8')
+            for arguments, command, expected in [
+                (['mac'], 'python', [str(ROOT / 'ssh.py'), '--shell', 'mac']),
+                (['other-host'], 'ssh.exe', ['other-host']),
+                (['mac', 'printf hello'], 'ssh.exe', ['mac', 'printf hello']),
+                (['-N', 'mac'], 'ssh.exe', ['-N', 'mac']),
+            ]:
+                with self.subTest(arguments=arguments):
+                    run = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File', str(script), *arguments], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(run.returncode, 7, run.stderr)
+                    self.assertEqual(json.loads(run.stdout), {'command': command, 'arguments': expected})
+
+
 class HelperLifecycleTest(unittest.TestCase):
+    @unittest.skipUnless(__import__('sys').platform == 'darwin', 'Requires the Mac login shell')
+    def test_shell_mode_inherits_clipboard_connection_and_preserves_exit_status(self):
+        import json
+        import os
+        import shlex
+        import socket
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pathlib.Path(directory)
+            record = folder / 'forward.json'
+            logins = folder / 'logins.txt'
+            (folder / '.zprofile').write_text('print login >> ' + shlex.quote(str(logins)) + '\n', encoding='utf-8')
+            fake_ssh = folder / 'ssh'
+            # Replace only the SSH network boundary; execute the real remote shell command.
+            fake_ssh.write_text(
+                '#!' + sys.executable + '\nimport json,subprocess,sys\nfrom pathlib import Path\n'
+                + 'Path(' + repr(str(record)) + ').write_text(json.dumps(sys.argv[sys.argv.index("-R") + 1]))\n'
+                + 'sys.exit(subprocess.call(sys.argv[-1], shell=True))\n', encoding='utf-8')
+            fake_ssh.chmod(0o700)
+            env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'], 'ZDOTDIR': directory}
+            probe = 'import json,os; print(json.dumps({k: os.environ[k] for k in ("PI_SSH_CLIPBOARD_SOCKET", "PI_SSH_CLIPBOARD_TOKEN")}))'
+            run = subprocess.run(
+                [sys.executable, '-B', str(ROOT / 'ssh.py'), '--shell', 'my-mac'],
+                input=shlex.join([sys.executable, '-c', probe]) + '\nexit 7\n',
+                env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(run.returncode, 7, run.stderr)
+            self.assertEqual(logins.read_text(encoding='utf-8').splitlines(), ['login'])
+            metadata = json.loads(next(line for line in run.stdout.splitlines() if line.startswith('{')))
+            self.assertRegex(metadata['PI_SSH_CLIPBOARD_TOKEN'], r'^[0-9a-f]{64}$')
+            forward = json.loads(record.read_text(encoding='utf-8'))
+            self.assertEqual(metadata['PI_SSH_CLIPBOARD_SOCKET'], forward.split(':', 1)[0])
+            with socket.socket() as connection:
+                self.assertNotEqual(connection.connect_ex(('127.0.0.1', int(forward.rsplit(':', 1)[1]))), 0)
+
     def test_start_and_stop_cli_leave_no_listener(self):
         import json
         import socket

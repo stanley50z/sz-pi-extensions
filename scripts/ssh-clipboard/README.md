@@ -29,12 +29,32 @@ python scripts\ssh-clipboard\ssh.py --cwd /Users/sidac/sz-pi-extensions my-mac -
 
 SSH config aliases supply the hostname, username, key, port, and jump host as usual. Put Pi arguments after `--`. Use `--pi /absolute/path/to/pi` if Pi is not on the Mac's interactive login-shell PATH. The launcher uses macOS `/bin/zsh -lic`.
 
+### Use `ssh mac` to open a normal shell
+
+To open a Mac login shell with clipboard forwarding ready, instead of launching Pi directly:
+
+```powershell
+python "$HOME\sz-pi-extensions\scripts\ssh-clipboard\ssh.py" --shell mac
+```
+
+You can then change directories and run `pi` or `pi --continue`. Pi inherits the clipboard connection from that shell. `--shell` cannot be combined with `--pi` or Pi arguments after `--`.
+
+For the short command, add this line to your PowerShell profile:
+
+```powershell
+. "$HOME\sz-pi-extensions\scripts\ssh-clipboard\profile.ps1"
+```
+
+Open a new PowerShell tab and run `ssh mac`. The profile defines a shell function, not an SSH config alias. It intercepts only bare `ssh mac`; other hosts and commands with extra arguments, such as `ssh mac uptime` or `ssh -N mac`, still use ordinary SSH. Use `ssh.exe mac` to bypass the function. The helper stops when you exit the Mac shell. No always-running service or SSH configuration change is needed.
+
+### Paste a screenshot
+
 1. Take a screenshot with Win+Shift+S and copy it.
 2. Focus the remote Pi prompt and press Alt+V.
 3. Wait for the `@"...png"` reference to appear. You can add text or paste another image.
 4. Press Enter. Pi receives PNG image content, not Windows-only file paths.
 
-An existing plain `ssh` connection has no forwarding configuration. Reconnect through this launcher and resume the session. A Pi process left in tmux keeps its original connection credentials; after reconnecting, restart Pi with `--continue` from the new launcher rather than reattaching that stale process.
+An existing plain `ssh` connection opened without the wrapper has no forwarding configuration. Reconnect through this launcher and resume the session. A Pi process left in tmux keeps its original connection credentials; after reconnecting, restart Pi with `--continue` from the new launcher rather than reattaching that stale process.
 
 ## Privacy and lifecycle
 
@@ -63,4 +83,8 @@ Keep the state file private. It contains the shutdown token. The adjacent `.log`
 
 `npm test` includes the extension and helper HTTP/CLI tests. Python must be available as `python` on Windows or `python3` elsewhere. Typecheck the extension with `npm run typecheck:ssh-image-paste`.
 
-The implementation was exercised through a real Pi pseudo-terminal and an isolated OpenSSH server on macOS: type a draft, send Alt+V, transfer a 303,200-byte PNG through Unix-socket forwarding, verify no submission, then press Enter and verify the attached bytes. The clipboard source for that run was a macOS system icon converted to PNG, not a Windows screenshot. The actual Windows PowerShell capture and Windows Terminal client still require the walkthrough above on Windows.
+The implementation was exercised through a real Pi pseudo-terminal and an isolated OpenSSH server on macOS: type a draft, send Alt+V, transfer a 303,200-byte PNG through Unix-socket forwarding, verify no submission, then press Enter and verify the attached bytes. That run used a macOS system icon converted to PNG.
+
+Windows validation also captured a real 3370×1702 screenshot and transferred its 147,585 PNG bytes to the Mac through SSH with an identical SHA-256 hash. The PowerShell `ssh mac` function was exercised against the real Mac login shell, verifying inherited clipboard configuration, an empty-clipboard response, exit-status propagation, helper shutdown, and socket cleanup. The physical Windows Terminal Alt+V interaction still needs the walkthrough above.
+
+The existing Windows test `test_slow_unauthenticated_request_has_a_total_deadline` still fails because Windows raises `ConnectionAbortedError`, while the test only accepts `ConnectionResetError` or EOF.

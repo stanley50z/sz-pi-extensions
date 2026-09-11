@@ -1,4 +1,4 @@
-"""Open remote Pi with Alt+V clipboard forwarding. Run inside Windows Terminal."""
+"""Open remote Pi or a Mac shell with clipboard forwarding. Run inside Windows Terminal."""
 import argparse
 import os
 from pathlib import Path
@@ -19,8 +19,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('host', help='SSH destination or host alias from ~/.ssh/config')
     parser.add_argument('--cwd', help='Working directory on the Mac')
-    parser.add_argument('--pi', default='pi', help='Pi executable on the Mac')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--pi', default='pi', help='Pi executable on the Mac')
+    mode.add_argument('--shell', action='store_true', help='Open a normal Mac login shell; run Pi yourself')
     args = parser.parse_args(argv[:split])
+    if args.shell and pi_args:
+        parser.error('--shell does not accept Pi arguments')
     if args.host.startswith('-') or not args.host.strip():
         parser.error('host must be an SSH destination, not an option')
     with tempfile.TemporaryDirectory(prefix='pi-clipboard-') as directory:
@@ -34,12 +38,13 @@ def main():
         )
         if args.cwd:
             script += f'cd -- {shlex.quote(args.cwd)} || exit; '
-        script += shlex.join([args.pi, *pi_args])
+        # Keep the parent shell alive to remove the socket when the login shell exits.
+        script += '/bin/zsh -il' if args.shell else shlex.join([args.pi, *pi_args])
         command = [
             'ssh', '-tt', '-o', 'ExitOnForwardFailure=yes',
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
             '-R', f'{socket_path}:127.0.0.1:{state["port"]}',
-            args.host, '/bin/zsh -lic ' + shlex.quote(script),
+            args.host, shlex.join(['/bin/zsh', '-c' if args.shell else '-lic', script]),
         ]
         try:
             return subprocess.call(command)
