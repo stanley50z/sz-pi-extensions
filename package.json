@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "postinstall": "node ./scripts/install-ketch.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "typecheck:ssh-image-paste": "tsc --noEmit --skipLibCheck --strict --target es2023 --module nodenext extensions/ssh-image-paste.ts"
   },
   "bundledDependencies": ["sz-pi-subagents"],
   "pi": {
@@ -25,6 +26,7 @@
   "dependencies": {
     "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/77ce0f259ab8b03adf007ca6e0b22df94fa4dfc1.tar.gz",
     "linkedom": "^0.16.11",
+    "pngjs": "^7.0.0",
     "typebox": "*"
   },
   "peerDependencies": {
@@ -34,5 +36,10 @@
   },
   "optionalDependencies": {
     "@mariozechner/clipboard": "^0.3.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "@types/pngjs": "^6.0.5",
+    "typescript": "^7.0.2"
   }
 }

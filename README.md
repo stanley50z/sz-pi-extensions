@@ -12,6 +12,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Credit-aware Firecrawl specialist** for managed extraction, crawling, monitoring, and parsing
 - **Structured user questions** through the `ask_user` tool
 - **Session transcript copying** through `/copy-all`
+- **Windows-to-Mac SSH image paste** through Alt+V and a small Windows clipboard helper
 - **Cwd-aware new sessions** through a `/new` TUI selector, with the current cwd preselected and recent project directories ranked next
 - **First-class local search** through `find_files` and `search_text`
 - **Compact tool output** for built-ins and local search, with short subagent call lines kept visible without exposing their prompts
@@ -77,6 +78,12 @@ The Git Diff Viewer activates when the session working directory belongs to a Gi
 When a GitHub Copilot model is selected, the centered subscription slot shows monthly consumption, for example `Copilot month:$43.93`. The session's calculated cost stays on the left, and Codex usage is unchanged. Copilot consumption is `quota_snapshots.premium_interactions.credits_used / 100` in USD, including included consumption and overage already. It is not an amount due. Valid zero displays `$0.00`; loading displays `…`; missing credentials, unsupported API-key or enterprise auth, invalid data, and failed requests display `unavailable`.
 
 The footer reads Pi's existing GitHub Copilot OAuth `refresh` credential from the effective `PI_CODING_AGENT_DIR/auth.json`, defaulting to `~/.pi/agent/auth.json`. It calls only `https://api.github.com/copilot_internal/user`, refuses redirects, and requires token-based billing and the upcoming UTC monthly reset date. It uses no billing API, `gh`, or bridge process. Session start, model selection, and turn completion trigger reads, with requests deduplicated and throttled to once per 60 seconds per unchanged credential. Auth changes are checked on every trigger; model changes and shutdown invalidate pending results. Requests time out after 10 seconds. This endpoint is undocumented, and GitHub's update latency is unspecified; the throttle is local policy, not a freshness guarantee. The existing narrow-terminal layout may omit the centered slot when it does not fit.
+
+## Image paste over SSH
+
+To paste Windows screenshots into Pi running on a Mac, start the connection from Windows Terminal with `python scripts\ssh-clipboard\ssh.py my-mac`. Copy a screenshot and press Alt+V in Pi. The helper transfers the image through SSH and adds it to the draft without submitting. Normal text paste is unchanged.
+
+See [setup, session resuming, and privacy details](scripts/ssh-clipboard/README.md). This needs the helper on Windows; installing the Mac extension alone cannot read the Windows clipboard.
 
 ## Manual skill invocation
 
