@@ -5,7 +5,7 @@
  * - Token speed (live output tokens/second, finalized for the most recent response)
  * - Clickable Git diff stats (+X −Y) centred when the session is in a repository
  * - Up to five changed files below the footer when the Git stats are expanded
- * - A temporary line naming any running subagents
+ * - A temporary line naming running subagents with their models and reasoning levels
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -60,7 +60,12 @@ function extractGitViewSummary(data: unknown): GitDiffSummary | null | undefined
   return candidate as GitDiffSummary;
 }
 
-type RunningSubagent = { id: string; name: string };
+type RunningSubagent = {
+  id: string;
+  name: string;
+  model?: string;
+  reasoningEffort?: string;
+};
 
 function extractRunningSubagents(data: unknown): RunningSubagent[] | undefined {
   if (!data || typeof data !== "object" || !("subagents" in data)) return undefined;
@@ -70,9 +75,11 @@ function extractRunningSubagents(data: unknown): RunningSubagent[] | undefined {
   const parsed: RunningSubagent[] = [];
   for (const subagent of subagents) {
     if (!subagent || typeof subagent !== "object") return undefined;
-    const { id, name } = subagent as Record<string, unknown>;
+    const { id, name, model, reasoningEffort } = subagent as Record<string, unknown>;
     if (typeof id !== "string" || typeof name !== "string") return undefined;
-    parsed.push({ id, name });
+    if (model !== undefined && typeof model !== "string") return undefined;
+    if (reasoningEffort !== undefined && typeof reasoningEffort !== "string") return undefined;
+    parsed.push({ id, name, model, reasoningEffort });
   }
   return parsed;
 }
@@ -588,7 +595,11 @@ export default function (pi: ExtensionAPI) {
           if (runningSubagents.length > 0) {
             const count = runningSubagents.length;
             const topics = runningSubagents
-              .map(({ name }) => truncateToWidth(sanitizeStatusText(name), 24, "..."))
+              .map(({ name, model, reasoningEffort }) => [
+                truncateToWidth(sanitizeStatusText(name), 24, "..."),
+                model && sanitizeStatusText(model),
+                reasoningEffort && sanitizeStatusText(reasoningEffort),
+              ].filter(Boolean).join(" · "))
               .join(", ");
             const label = `${count} subagent${count === 1 ? "" : "s"} running · ${topics}`;
             lines.push(theme.fg("dim", truncateToWidth(label, width)));

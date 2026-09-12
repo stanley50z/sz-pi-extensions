@@ -22,7 +22,13 @@ const SUBAGENT_TOOL_NAMES = new Set([
 ]);
 
 type SubagentStatusSource = {
-  list(): Array<{ id: string; name: string; status: string }>;
+  list(): Array<{
+    id: string;
+    name: string;
+    status: string;
+    model?: string;
+    reasoningEffort?: string;
+  }>;
   subscribe(listener: () => void): () => void;
 };
 
@@ -30,6 +36,7 @@ type EventSink = {
   events: { emit(name: string, data: unknown): void };
 };
 
+// Publish running children and their current settings for the parent session's footer.
 export function connectRunningSubagentStatus(
   pi: EventSink,
   source: SubagentStatusSource,
@@ -38,7 +45,7 @@ export function connectRunningSubagentStatus(
   const publish = () => {
     const subagents = source.list()
       .filter(({ status }) => status === "running")
-      .map(({ id, name }) => ({ id, name }));
+      .map(({ id, name, model, reasoningEffort }) => ({ id, name, model, reasoningEffort }));
     const signature = JSON.stringify(subagents);
     if (signature === lastSignature) return;
     lastSignature = signature;
@@ -55,6 +62,7 @@ function stringArg(args: Record<string, unknown>, name: string): string | undefi
   return typeof value === "string" && value ? value.replace(/\s+/g, " ") : undefined;
 }
 
+// Keep delegation settings visible in compact call rows without exposing the prompt.
 function subagentRendering(name: string): MinimalToolOutputOptions {
   return {
     nouns: ["call", "calls"],
@@ -64,7 +72,13 @@ function subagentRendering(name: string): MinimalToolOutputOptions {
       if (name === "subagent_spawn") {
         const childName = stringArg(args, "name");
         const harness = stringArg(args, "harness");
-        detail = childName && harness ? `${childName} with ${harness}` : childName ?? harness;
+        const model = stringArg(args, "model");
+        const reasoning = stringArg(args, "reasoning_effort");
+        detail = [
+          childName && harness ? `${childName} with ${harness}` : childName ?? harness,
+          model,
+          reasoning,
+        ].filter(Boolean).join(" · ");
       } else if (name === "subagent_check") {
         detail = stringArg(args, "id");
       } else if (name === "subagent_wait" || name === "subagent_cancel") {

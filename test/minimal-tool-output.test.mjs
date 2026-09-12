@@ -379,7 +379,13 @@ test("ultra-collapsed view keeps subagent calls visible without their prompts", 
       type: "toolCall",
       id: "subagent-spawn-1",
       name: "subagent_spawn",
-      arguments: { prompt: "Review the change", name: "review", harness: "pi" },
+      arguments: {
+        prompt: "Review the change",
+        name: "review",
+        harness: "pi",
+        model: "openai-codex/gpt-6-astra",
+        reasoning_effort: "low",
+      },
     },
     { type: "toolCall", id: "read-after-spawn", name: "read", arguments: { path: "a.ts" } },
   ];
@@ -397,7 +403,11 @@ test("ultra-collapsed view keeps subagent calls visible without their prompts", 
     invalidate() {},
   });
 
-  assert.deepEqual(renderText(spawnCall), ["", "subagent_spawn review with pi", ""]);
+  assert.deepEqual(renderText(spawnCall), [
+    "",
+    "subagent_spawn review with pi · openai-codex/gpt-6-astra · low",
+    "",
+  ]);
   assert.doesNotMatch(renderText(spawnCall).join("\n"), /Review the change/);
   assert.deepEqual(renderText(readCall), ["Delegating the review + 1 tool call"]);
   assert.deepEqual(
@@ -409,6 +419,38 @@ test("ultra-collapsed view keeps subagent calls visible without their prompts", 
     ).render(120),
     [],
   );
+});
+
+test("spawn call settings handle omitted arguments and reasoning off in both views", () => {
+  const tool = withMinimalSubagentOutput({
+    name: "subagent_spawn",
+    label: "Spawn Subagent",
+    description: "Start a child session",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return { content: [{ type: "text", text: "started" }], details: {} };
+    },
+  });
+  const cases = [
+    [{}, "subagent_spawn"],
+    [{ name: "review", harness: "pi" }, "subagent_spawn review with pi"],
+    [{ model: "sonnet" }, "subagent_spawn sonnet"],
+    [{ reasoning_effort: "off" }, "subagent_spawn off"],
+    [
+      { name: "review", harness: "claude", model: "sonnet", reasoning_effort: "medium" },
+      "subagent_spawn review with claude · sonnet · medium",
+    ],
+  ];
+  for (const expanded of [false, true]) {
+    for (const [args, expected] of cases) {
+      const call = tool.renderCall(args, theme, {
+        toolCallId: "spawn-settings",
+        expanded,
+        invalidate() {},
+      });
+      assert.deepEqual(renderText(call), ["", expected, ""]);
+    }
+  }
 });
 
 test("subagent status publishes only children that are still running", () => {
@@ -431,7 +473,7 @@ test("subagent status publishes only children that are still running", () => {
 
   assert.deepEqual(events.at(-1), {
     name: "sz-subagents:running",
-    data: { subagents: [{ id: "sa-1", name: "auth-review" }] },
+    data: { subagents: [{ id: "sa-1", name: "auth-review", model: undefined, reasoningEffort: undefined }] },
   });
 
   snapshots = snapshots.map((snapshot) => ({ ...snapshot, status: "done" }));

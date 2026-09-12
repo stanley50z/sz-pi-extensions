@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { visibleWidth } from '@earendil-works/pi-tui';
+import { connectRunningSubagentStatus } from '../lib/subagent-tool-output.ts';
 
 const moduleUrl = new URL('../extensions/sz-pi-footer.ts', import.meta.url).href;
 
@@ -579,23 +580,40 @@ test('footer adds a short third line only while subagents are running', async ()
 
     assert.equal(footer.render(100).length, 2);
 
-    pi.events.emit('sz-subagents:running', {
-      subagents: [{ id: 'sa-1', name: 'turn-delivery-research' }],
+    let snapshots = [{
+      id: 'sa-1', name: 'turn-delivery-research', status: 'running',
+      model: 'openai-codex/gpt-6-astra', reasoningEffort: 'low',
+    }];
+    let notify;
+    const disconnect = connectRunningSubagentStatus(pi, {
+      list: () => snapshots,
+      subscribe(listener) {
+        notify = listener;
+        return () => {};
+      },
     });
     assert.equal(
-      footer.render(100)[2],
-      '1 subagent running · turn-delivery-research',
+      footer.render(160)[2],
+      '1 subagent running · turn-delivery-research · openai-codex/gpt-6-astra · low',
     );
+
+    snapshots = [{ ...snapshots[0], model: 'sonnet', reasoningEffort: 'off' }];
+    notify();
+    assert.equal(
+      footer.render(160)[2],
+      '1 subagent running · turn-delivery-research · sonnet · off',
+    );
+    disconnect();
 
     pi.events.emit('sz-subagents:running', {
       subagents: [
         { id: 'sa-1', name: 'turn-delivery-research' },
-        { id: 'sa-2', name: 'api-review' },
+        { id: 'sa-2', name: 'api-review', model: 'sonnet', reasoningEffort: 'medium' },
       ],
     });
-    const runningLines = footer.render(100);
+    const runningLines = footer.render(160);
     assert.equal(runningLines.length, 3);
-    assert.equal(runningLines[2], '2 subagents running · turn-delivery-research, api-review');
+    assert.equal(runningLines[2], '2 subagents running · turn-delivery-research, api-review · sonnet · medium');
 
     pi.events.emit('sz-subagents:running', { subagents: [] });
     assert.equal(footer.render(100).length, 2);
