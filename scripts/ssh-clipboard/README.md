@@ -87,4 +87,4 @@ The implementation was exercised through a real Pi pseudo-terminal and an isolat
 
 Windows validation also captured a real 3370×1702 screenshot and transferred its 147,585 PNG bytes to the Mac through SSH with an identical SHA-256 hash. The PowerShell `ssh mac` function was exercised against the real Mac login shell, verifying inherited clipboard configuration, an empty-clipboard response, exit-status propagation, helper shutdown, and socket cleanup. The physical Windows Terminal Alt+V interaction still needs the walkthrough above.
 
-The existing Windows test `test_slow_unauthenticated_request_has_a_total_deadline` still fails because Windows raises `ConnectionAbortedError`, while the test only accepts `ConnectionResetError` or EOF.
+The request-deadline regression keeps trickling header bytes until the server closes the connection, so an idle timeout cannot substitute for the total deadline. It accepts EOF, reset, abort, or broken pipe as platform-specific closure signals. Disabling the total timer makes the test fail.

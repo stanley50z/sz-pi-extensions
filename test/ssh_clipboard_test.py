@@ -42,7 +42,9 @@ class ClipboardServerTest(unittest.TestCase):
 
 
 class RequestBoundsTest(unittest.TestCase):
+    # Keep sending until closure so an idle timeout cannot impersonate a total deadline.
     def test_slow_unauthenticated_request_has_a_total_deadline(self):
+        import select
         import socket
         import time
         server = server_module.create_server('a' * 64, lambda: PNG, request_timeout=0.3)
@@ -51,18 +53,18 @@ class RequestBoundsTest(unittest.TestCase):
         try:
             with socket.create_connection(('127.0.0.1', server.server_port), timeout=2) as client:
                 client.sendall(b'GET /image HTTP/1.1\r\n')
-                started = time.monotonic()
-                while time.monotonic() - started < 0.7:
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
                     try:
                         client.sendall(b'X')
-                    except OSError:
-                        break
-                    time.sleep(0.05)
-                client.settimeout(1)
-                try:
-                    self.assertEqual(client.recv(1024), b'')
-                except ConnectionResetError:
-                    pass  # A reset also proves the deadline closed the socket.
+                        readable, _, _ = select.select([client], [], [], 0.05)
+                        if readable:
+                            self.assertEqual(client.recv(1024), b'')
+                            break
+                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                        break  # A closed connection can surface as EOF, reset, abort, or broken pipe.
+                else:
+                    self.fail('Total request deadline did not close a continuously trickling connection')
         finally:
             server.shutdown()
             thread.join(timeout=3)

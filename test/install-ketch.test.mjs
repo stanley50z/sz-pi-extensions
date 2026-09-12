@@ -46,7 +46,7 @@ test("npm install provisions Ketch as an ignored Pi skill checkout", () => {
   const packageManifest = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
   const gitignore = readFileSync(join(process.cwd(), ".gitignore"), "utf8");
 
-  assert.equal(packageManifest.scripts.postinstall, "node ./scripts/install-ketch.mjs");
+  assert.equal(packageManifest.scripts.postinstall, "node ./scripts/install-append-system.mjs && node ./scripts/install-ketch.mjs");
   assert.equal(packageManifest.pi.skills.includes("node_modules/ketch/skills/ketch"), true);
   assert.match(gitignore, /^node_modules\/$/m);
 });

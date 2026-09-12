@@ -61,6 +61,20 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 }
 ```
 
+## Pi-specific system instructions
+
+`npm install` also installs the tracked `config/APPEND_SYSTEM.md` into `~/.pi/agent/APPEND_SYSTEM.md`, or the directory selected by `PI_CODING_AGENT_DIR`. The installer creates or updates only the `sz-pi-extensions` marked section, preserves unrelated instructions, and avoids duplicates on repeat installs.
+
+The prompt records preferred subagent harnesses, providers, models, and reasoning levels. These are agent instructions, not enforced tool defaults or changes to the current session's model. The subagent tool and global `AGENTS.md` remain unchanged.
+
+Edit `config/APPEND_SYSTEM.md` to change these preferences across machines. To sync just the prompt, including after installing with lifecycle scripts disabled, run:
+
+```bash
+node scripts/install-append-system.mjs
+```
+
+Run `/reload` in existing Pi sessions afterward. Pi uses the exact filename `APPEND_SYSTEM.md`. A trusted project's `.pi/APPEND_SYSTEM.md` or an explicit `--append-system-prompt` overrides global file discovery.
+
 ## Local workflow tools
 
 `ask_user` presents two to five choices and always includes a free-form answer. In the TUI, highlight "Type my own answer" and begin typing immediately; Pi's configured clipboard shortcut can paste text or attach an image there. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.

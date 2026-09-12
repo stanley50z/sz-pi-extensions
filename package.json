@@ -8,7 +8,7 @@
     "pi-package"
   ],
   "scripts": {
-    "postinstall": "node ./scripts/install-ketch.mjs",
+    "postinstall": "node ./scripts/install-append-system.mjs && node ./scripts/install-ketch.mjs",
     "test": "node --test",
     "typecheck:ssh-image-paste": "tsc --noEmit --skipLibCheck --strict --target es2023 --module nodenext extensions/ssh-image-paste.ts"
   },
