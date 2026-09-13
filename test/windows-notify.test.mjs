@@ -108,6 +108,37 @@ test("native Pi subagents do not install notification hooks", async () => {
   assert.equal(state.handlers.has("ui_prompt_start"), false);
 });
 
+test("an interrupted run does not post a completion notification or request tab attention", async () => {
+  const state = setup({ terminalState: "foreground-inactive" });
+  const controller = new AbortController();
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, { ...state.ctx, signal: controller.signal });
+
+  controller.abort();
+  // Pi clears ctx.signal before emitting agent_settled.
+  await state.handlers.get("agent_settled")({}, state.ctx);
+
+  assert.deepEqual(state.notifications, []);
+  assert.deepEqual(state.attentionSignals, []);
+  assert.deepEqual(state.activationWatchers, []);
+});
+
+test("normal completion still notifies after an interrupted run", async () => {
+  const state = setup();
+  const interrupted = new AbortController();
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, { ...state.ctx, signal: interrupted.signal });
+  interrupted.abort();
+  await state.handlers.get("agent_settled")({}, state.ctx);
+
+  const nextRun = new AbortController();
+  await state.handlers.get("agent_start")({}, { ...state.ctx, signal: nextRun.signal });
+  await state.handlers.get("agent_settled")({}, state.ctx);
+
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].body, "Response finished");
+});
+
 test("a completed background tab posts a persistent notification without taking focus", async () => {
   const state = setup({ terminalState: "background" });
   await state.handlers.get("session_start")({}, state.ctx);

@@ -495,6 +495,7 @@ export function createWindowsNotifyExtension(
     let cancelActivationWatch: (() => void) | undefined;
     let attentionActive = false;
     let agentRunning = false;
+    let agentSignal: AbortSignal | undefined;
     let reportedError = false;
 
     function reportError(ctx: ExtensionContext, error: unknown): void {
@@ -595,16 +596,22 @@ export function createWindowsNotifyExtension(
     pi.on("session_start", async (_event, ctx) => {
       terminalTarget = undefined;
       agentRunning = false;
+      agentSignal = undefined;
       reportedError = false;
       if (ctx.mode !== "tui") return;
 
-      pi.on("agent_start", () => {
+      pi.on("agent_start", (_event, ctx) => {
         agentRunning = true;
+        // Retain the run's signal because Pi clears ctx.signal before agent_settled.
+        agentSignal = ctx.signal;
       });
 
       pi.on("agent_settled", async (_event, ctx) => {
         if (!agentRunning) return;
         agentRunning = false;
+        const interrupted = agentSignal?.aborted;
+        agentSignal = undefined;
+        if (interrupted) return;
         await dispatch(ctx, "Response finished");
       });
 
@@ -636,6 +643,7 @@ export function createWindowsNotifyExtension(
       attentionActive = false;
       terminalTarget = undefined;
       agentRunning = false;
+      agentSignal = undefined;
     });
   };
 }
