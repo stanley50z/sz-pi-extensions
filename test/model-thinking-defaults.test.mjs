@@ -61,14 +61,14 @@ test('5.6 Sol starts with high thinking effort', async () => {
   assert.deepEqual(pi.selectedLevels, ['high']);
 });
 
-test('Claude Fable 5 gets high thinking effort when selected', async () => {
+test('Claude Fable 5.1 gets high thinking effort when selected', async () => {
   const pi = await install();
 
   await pi.handlers.get('model_select')({
-    model: model('github-copilot', 'claude-fable-5'),
+    model: model('github-copilot', 'claude-fable-5.1'),
     previousModel: model('openai-codex', 'gpt-5.6-luna'),
     source: 'set',
-  }, { model: model('github-copilot', 'claude-fable-5') });
+  }, { model: model('github-copilot', 'claude-fable-5.1') });
 
   assert.deepEqual(pi.selectedLevels, ['high']);
 });

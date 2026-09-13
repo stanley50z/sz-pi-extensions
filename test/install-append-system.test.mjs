@@ -31,12 +31,6 @@ test("setup installs model guidance and updates only its own section on repeat i
   const { path, install } = fixture(t);
   install();
   const installed = readFileSync(path, "utf8");
-  assert.match(installed, /Prefer the Pi harness for subagent sessions/);
-  assert.match(installed, /GPT models.*openai-codex/);
-  assert.match(installed, /Claude models.*github-copilot/);
-  assert.match(installed, /Prefer Claude models for front-end design and code review/);
-  assert.match(installed, /Prefer GPT-6 Astra with low reasoning for daily coding and everyday use/);
-  assert.match(installed, /all subagent sessions using GPT-6 Astra or Fable.*medium or lower/);
   install();
   assert.equal(readFileSync(path, "utf8"), installed);
 

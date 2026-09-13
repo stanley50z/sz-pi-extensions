@@ -10,7 +10,7 @@ function defaultThinkingLevel(model: ModelLike | undefined): ThinkingLevel | und
   if (model.provider === "deepseek") return "max";
   if (model.provider === "openai-codex" && modelId.includes("luna")) return "max";
   if (model.provider === "openai-codex" && modelId === "gpt-5.6-sol") return "high";
-  if (model.provider === "github-copilot" && modelId === "claude-fable-5") return "high";
+  if (model.provider === "github-copilot" && modelId === "claude-fable-5.1") return "high";
   return undefined;
 }
 

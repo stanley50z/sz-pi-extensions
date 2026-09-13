@@ -26,7 +26,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
 - **Codex-style manual skill invocation** through `$skill-name` with `$` autocomplete
-- **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5 to `high`
+- **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5.1 to `high`
 - **Git view** and other local workflow helpers
 
 ## Install
