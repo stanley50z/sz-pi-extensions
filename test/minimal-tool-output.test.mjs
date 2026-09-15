@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { ToolExecutionComponent } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import fileSearchExtension from "../extensions/file-search.ts";
 import minimalToolOutputExtension from "../extensions/minimal-tool-output.ts";
 import {
@@ -405,7 +406,7 @@ test("ultra-collapsed view keeps subagent calls visible without their prompts", 
 
   assert.deepEqual(renderText(spawnCall), [
     "",
-    "subagent_spawn review with pi · openai-codex/gpt-6-astra · low",
+    "subagent_spawn review with pi · gpt-6-astra · low",
     "",
   ]);
   assert.doesNotMatch(renderText(spawnCall).join("\n"), /Review the change/);
@@ -449,6 +450,38 @@ test("spawn call settings handle omitted arguments and reasoning off in both vie
         invalidate() {},
       });
       assert.deepEqual(renderText(call), ["", expected, ""]);
+    }
+  }
+});
+
+test("spawn rows retain the inherited model after execution and session restore", async () => {
+  const makeTool = () => withMinimalSubagentOutput({
+    name: "subagent_spawn",
+    label: "Spawn Subagent",
+    description: "Start a child session",
+    parameters: { type: "object", properties: {} },
+    async execute(_id, args) {
+      assert.equal(args.model, undefined, "display must not change spawn arguments");
+      return { content: [{ type: "text", text: "started" }], details: { retained: true } };
+    },
+  });
+  const tool = makeTool();
+  const args = { name: "review", harness: "pi", reasoning_effort: "low" };
+  const ctx = { model: { provider: "openai-codex", id: "gpt-6-astra" } };
+  const result = await tool.execute("inherited", args, undefined, undefined, ctx);
+  assert.equal(result.details.retained, true);
+  ctx.model = { provider: "github-copilot", id: "claude-fable-5-1" };
+
+  for (const renderer of [tool, makeTool()]) {
+    for (const expanded of [false, true]) {
+      const row = new ToolExecutionComponent(
+        "subagent_spawn", "inherited", args, {}, renderer, { requestRender() {} }, process.cwd(),
+      );
+      row.setExpanded(expanded);
+      row.updateResult(JSON.parse(JSON.stringify(result)));
+      assert.deepEqual(renderText(row).filter(Boolean), [
+        "subagent_spawn review with pi · gpt-6-astra · low",
+      ]);
     }
   }
 });

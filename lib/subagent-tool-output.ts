@@ -76,7 +76,7 @@ function subagentRendering(name: string): MinimalToolOutputOptions {
         const reasoning = stringArg(args, "reasoning_effort");
         detail = [
           childName && harness ? `${childName} with ${harness}` : childName ?? harness,
-          model,
+          model?.replace(/^[^/]+\//, ""),
           reasoning,
         ].filter(Boolean).join(" · ");
       } else if (name === "subagent_check") {
@@ -131,10 +131,41 @@ export const renderSubagentResult: MessageRenderer = (message, { expanded }, the
   return box;
 };
 
+// Persist Pi's inherited model with the result so restored rows do not use today's parent model.
 export function withMinimalSubagentOutput<TParams extends TSchema, TDetails>(
   tool: ToolDefinition<TParams, TDetails>,
 ): ToolDefinition<TParams, TDetails> {
-  return SUBAGENT_TOOL_NAMES.has(tool.name)
-    ? withMinimalToolOutput(tool, subagentRendering(tool.name))
-    : tool;
+  if (!SUBAGENT_TOOL_NAMES.has(tool.name)) return tool;
+  const minimal = withMinimalToolOutput(tool, subagentRendering(tool.name));
+  if (tool.name !== "subagent_spawn") return minimal;
+
+  return {
+    ...minimal,
+    async execute(id, params, signal, onUpdate, ctx) {
+      const args = params as Record<string, unknown>;
+      const inheritedModel = !args.model && args.harness === "pi" && ctx.model
+        ? `${ctx.model.provider}/${ctx.model.id}`
+        : undefined;
+      const result = await tool.execute(id, params, signal, onUpdate, ctx);
+      return inheritedModel
+        ? { ...result, details: { ...result.details, subagentModel: inheritedModel } }
+        : result;
+    },
+    renderCall(args, theme, context) {
+      // The call slot renders before the result slot; read their shared state at paint time.
+      return {
+        render(width) {
+          const model = stringArg(context.state ?? {}, "subagentModel");
+          return minimal.renderCall!({ ...args, ...(model ? { model } : {}) }, theme, context).render(width);
+        },
+        invalidate() {},
+      };
+    },
+    renderResult(result, options, theme, context) {
+      if (result.details && typeof result.details === "object" && context.state) {
+        context.state.subagentModel = stringArg(result.details as Record<string, unknown>, "subagentModel");
+      }
+      return minimal.renderResult!(result, options, theme, context);
+    },
+  };
 }

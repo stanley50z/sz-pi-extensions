@@ -597,7 +597,7 @@ export default function (pi: ExtensionAPI) {
             const topics = runningSubagents
               .map(({ name, model, reasoningEffort }) => [
                 truncateToWidth(sanitizeStatusText(name), 24, "..."),
-                model && sanitizeStatusText(model),
+                model && sanitizeStatusText(model.replace(/^[^/]+\//, "")),
                 reasoningEffort && sanitizeStatusText(reasoningEffort),
               ].filter(Boolean).join(" · "))
               .join(", ");

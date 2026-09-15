@@ -594,7 +594,7 @@ test('footer adds a short third line only while subagents are running', async ()
     });
     assert.equal(
       footer.render(160)[2],
-      '1 subagent running · turn-delivery-research · openai-codex/gpt-6-astra · low',
+      '1 subagent running · turn-delivery-research · gpt-6-astra · low',
     );
 
     snapshots = [{ ...snapshots[0], model: 'sonnet', reasoningEffort: 'off' }];
