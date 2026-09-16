@@ -3,11 +3,14 @@
  *
  * Shows the default footer info plus:
  * - Token speed (live output tokens/second, finalized for the most recent response)
+ * - Clickable cwd path that opens the session folder in the OS file manager
  * - Clickable Git diff stats (+X −Y) centred when the session is in a repository
  * - Up to five changed files below the footer when the Git stats are expanded
  * - A temporary line naming running subagents with their models and reasoning levels
  */
 
+import childProcess from "node:child_process";
+import { resolve } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   estimateTokens,
@@ -149,6 +152,17 @@ function formatCost(cost: number): string {
 function compactPath(path: string): string {
   const home = process.env.HOME || process.env.USERPROFILE;
   return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+}
+
+// Open the real session folder without waiting for the file manager to exit.
+function openInFileManager(cwd: string): void {
+  const command = process.platform === "win32" ? "explorer.exe"
+    : process.platform === "darwin" ? "open" : "xdg-open";
+  const directory = process.platform === "win32" ? resolve(cwd) : cwd;
+  const child = childProcess.spawn(command, [directory], { detached: true, stdio: "ignore" });
+  // A missing desktop opener must not crash the terminal session.
+  child.on("error", () => {});
+  child.unref();
 }
 
 function formatProviderName(provider: string): string {
@@ -389,6 +403,7 @@ export default function (pi: ExtensionAPI) {
       requestFooterRender = renderFooter;
       const unsub = footerData.onBranchChange(renderFooter);
       let diffHitbox: { start: number; end: number; row: number } | null = null;
+      let cwdHitbox: { end: number; cwd: string } | null = null;
 
       return {
         dispose() {
@@ -397,9 +412,12 @@ export default function (pi: ExtensionAPI) {
         },
         invalidate() {},
         handleMouse(event: TuiMouseEvent) {
+          if (event.type !== "click" || event.button !== "left") return undefined;
+          if (cwdHitbox && event.y === 0 && event.x >= 0 && event.x < cwdHitbox.end) {
+            openInFileManager(cwdHitbox.cwd);
+            return { handled: true, render: false };
+          }
           if (
-            event.type !== "click" ||
-            event.button !== "left" ||
             !diffHitbox ||
             event.y !== diffHitbox.row ||
             event.x < diffHitbox.start ||
@@ -414,6 +432,7 @@ export default function (pi: ExtensionAPI) {
         },
         render(width: number): string[] {
           diffHitbox = null;
+          cwdHitbox = null;
           // ── line 1: cwd, git branch, session name, token speed ─────
           const outputTokensPerSec = liveOutputTokensPerSec ?? lastOutputTokensPerSec;
           const speedText = outputTokensPerSec !== null && outputTokensPerSec > 0
@@ -427,7 +446,8 @@ export default function (pi: ExtensionAPI) {
           const cwd = typeof ctx.sessionManager.getCwd === "function"
             ? ctx.sessionManager.getCwd()
             : ctx.cwd;
-          let pwd = compactPath(cwd);
+          const compactCwd = compactPath(cwd);
+          let pwd = compactCwd;
           // Pi reads HEAD directly, even from incomplete .git metadata. Only
           // show its branch after the Git collector confirms a repository.
           const branch = gitDiffSummary ? footerData.getGitBranch() : null;
@@ -448,6 +468,11 @@ export default function (pi: ExtensionAPI) {
             : availableBeforeSpeed;
           const pwdText = truncateToWidth(pwd, pwdMaxWidth, "...");
           const pwdW = visibleWidth(pwdText);
+          // Keep the existing combined truncation; only the visible cwd is clickable.
+          const cwdText = pwdText.startsWith(compactCwd) ? compactCwd : pwdText;
+          const styledPwd = theme.fg("dim", theme.underline(cwdText) + pwdText.slice(cwdText.length));
+          const cwdWidth = Math.min(width, visibleWidth(cwdText));
+          if (cwdWidth > 0) cwdHitbox = { end: cwdWidth, cwd };
 
           let prefix: string;
           if (sessionText) {
@@ -455,11 +480,11 @@ export default function (pi: ExtensionAPI) {
             const minimumStart = pwdW + minGap;
             const maximumStart = availableBeforeSpeed - sessionW;
             const sessionStart = Math.min(Math.max(centeredStart, minimumStart), maximumStart);
-            prefix = theme.fg("dim", pwdText) +
+            prefix = styledPwd +
               " ".repeat(Math.max(minGap, sessionStart - pwdW)) +
               theme.fg("dim", sessionText);
           } else {
-            prefix = theme.fg("dim", pwdText);
+            prefix = styledPwd;
           }
 
           const pwdPad = " ".repeat(Math.max(minGap, width - visibleWidth(prefix) - speedW));

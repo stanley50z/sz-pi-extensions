@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ProcessTerminal } from "@earendil-works/pi-tui";
 import {
   buildWindowsProtocolCommand,
   createWindowsNotifyExtension,
@@ -16,6 +17,9 @@ function setup({
   platform = "win32",
   targets = [{ windowHandle: 101, tabRuntimeId: [42, 7] }],
   terminalState = "background",
+  getTerminalState = async () => terminalState,
+  terminal = { setProgress() {} },
+  nativeAttention = false,
 } = {}) {
   const handlers = new Map();
   const notifications = [];
@@ -44,17 +48,17 @@ function setup({
       capturedTitles.push(title);
       return targets[Math.min(captureIndex++, targets.length - 1)];
     },
-    async getTerminalState() {
-      return terminalState;
-    },
+    getTerminalState,
     showNotification(notification, options) {
       const shown = { ...notification, ...options };
       notifications.push(shown);
       return () => dismissedNotifications.push(shown);
     },
-    setTabAttention(active) {
-      attentionSignals.push(active);
-    },
+    ...(nativeAttention ? {} : {
+      setTabAttention(active) {
+        attentionSignals.push(active);
+      },
+    }),
     watchTabActivation(target, onActive, onError) {
       activationWatchers.push({ target, onActive, onError });
       return () => {};
@@ -64,6 +68,8 @@ function setup({
   const ctx = {
     mode: "tui",
     ui: {
+      getEditorComponent: () => () => ({ render: () => [], invalidate() {} }),
+      setEditorComponent(factory) { factory({ terminal }, {}, {}); },
       notify(message, type) {
         uiNotifications.push({ message, type });
       },
@@ -256,6 +262,95 @@ test("agent input prompts use the same state-aware notification behavior", async
     persistent: true,
     activationUri: "pi-notify://focus/test-token",
   }]);
+});
+
+test("a question requests the existing tab attention indicator even in the active tab", async () => {
+  const state = setup({ terminalState: "foreground-active" });
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+
+  await state.handlers.get("ui_prompt_start")({ kind: "custom" }, state.ctx);
+
+  assert.deepEqual(state.attentionSignals, [true]);
+  assert.equal(state.notifications[0].body, "Input needed");
+});
+
+test("selecting a waiting tab keeps attention until the question closes", async () => {
+  const state = setup({ terminalState: "foreground-inactive" });
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+  await state.handlers.get("ui_prompt_start")({ kind: "custom" }, state.ctx);
+
+  state.activationWatchers[0].onActive();
+  assert.deepEqual(state.attentionSignals, [true]);
+
+  await state.handlers.get("ui_prompt_end")({ kind: "custom" }, state.ctx);
+  assert.deepEqual(state.attentionSignals, [true, false]);
+});
+
+test("a question closed during the native state lookup does not restore stale attention", async () => {
+  let resolveState;
+  const state = setup({
+    getTerminalState: () => new Promise((resolve) => { resolveState = resolve; }),
+  });
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+
+  const opening = state.handlers.get("ui_prompt_start")({ kind: "custom" }, state.ctx);
+  await state.handlers.get("ui_prompt_end")({ kind: "custom" }, state.ctx);
+  resolveState("foreground-inactive");
+  await opening;
+
+  assert.deepEqual(state.attentionSignals, [true, false]);
+  assert.deepEqual(state.notifications, []);
+  assert.deepEqual(state.activationWatchers, []);
+});
+
+test("the solid question ring survives Pi's busy keepalive and resumes after answering", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const sequences = [];
+  t.mock.method(process.stdout, "write", (data) => { sequences.push(data); return true; });
+  const terminal = new ProcessTerminal();
+  const originalSetProgress = terminal.setProgress;
+  const state = setup({ terminal, nativeAttention: true, terminalState: "foreground-active" });
+  t.after(() => terminal.setProgress(false));
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+  terminal.setProgress(true);
+  t.mock.timers.tick(1000);
+  assert.equal(sequences.at(-1), "\x1b]9;4;3\x07");
+
+  await state.handlers.get("ui_prompt_start")({ kind: "custom" }, state.ctx);
+  const waitingWrites = sequences.length;
+  t.mock.timers.tick(3000);
+  assert.equal(sequences.length, waitingWrites);
+  assert.equal(sequences.at(-1), "\x1b]9;4;4;100\x07");
+  terminal.setProgress(true);
+  t.mock.timers.tick(2000);
+  assert.equal(sequences.length, waitingWrites);
+
+  await state.handlers.get("ui_prompt_end")({ kind: "custom" }, state.ctx);
+  assert.equal(sequences.at(-1), "\x1b]9;4;3\x07");
+  const resumedWrites = sequences.length;
+  t.mock.timers.tick(1000);
+  assert.equal(sequences.length, resumedWrites + 1);
+  terminal.setProgress(false);
+  await state.handlers.get("session_shutdown")({}, state.ctx);
+  assert.equal(terminal.setProgress, originalSetProgress);
+});
+
+test("answering does not enable a disabled busy indicator", async (t) => {
+  const sequences = [];
+  t.mock.method(process.stdout, "write", (data) => { sequences.push(data); return true; });
+  const terminal = new ProcessTerminal();
+  const state = setup({ terminal, nativeAttention: true, terminalState: "foreground-active" });
+  t.after(() => terminal.setProgress(false));
+  await state.handlers.get("session_start")({}, state.ctx);
+  await state.handlers.get("agent_start")({}, state.ctx);
+  await state.handlers.get("ui_prompt_start")({ kind: "custom" }, state.ctx);
+  await state.handlers.get("ui_prompt_end")({ kind: "custom" }, state.ctx);
+  assert.equal(sequences.includes("\x1b]9;4;3\x07"), false);
+  await state.handlers.get("session_shutdown")({}, state.ctx);
 });
 
 test("idle UI such as the /new selector does not trigger a notification", async () => {

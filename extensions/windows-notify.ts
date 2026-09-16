@@ -4,7 +4,8 @@ import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Terminal } from "@earendil-works/pi-tui";
 import { formatTerminalTitle } from "./session-title.ts";
 
 interface TerminalTarget {
@@ -395,6 +396,22 @@ if ([PiToastSignal]::Result -eq 3) { throw "Windows could not display the notifi
   };
 }
 
+/** Suspends Pi's busy keepalive while a prompt owns the terminal attention ring. */
+function controlTerminalProgress(terminal: Terminal, isWaiting: () => boolean) {
+  const setProgress = terminal.setProgress;
+  let requested = false;
+  terminal.setProgress = (active) => {
+    requested = active;
+    if (!isWaiting()) setProgress.call(terminal, active);
+  };
+  return {
+    terminal,
+    pause() { setProgress.call(terminal, false); },
+    resume() { setProgress.call(terminal, requested); },
+    dispose() { terminal.setProgress = setProgress; },
+  };
+}
+
 function setTabAttention(active: boolean): void {
   process.stdout.write(active ? "\u001b]9;4;4;100\u0007" : "\u001b]9;4;0;0\u0007");
 }
@@ -494,6 +511,9 @@ export function createWindowsNotifyExtension(
     let cancelNotification: (() => void) | undefined;
     let cancelActivationWatch: (() => void) | undefined;
     let attentionActive = false;
+    let waitingForInput = false;
+    let terminalProgress: ReturnType<typeof controlTerminalProgress> | undefined;
+    let notificationGeneration = 0;
     let agentRunning = false;
     let agentSignal: AbortSignal | undefined;
     let reportedError = false;
@@ -524,8 +544,9 @@ export function createWindowsNotifyExtension(
       ctx: ExtensionContext,
       body: string,
       staleTarget: TerminalTarget,
+      generation: number,
     ): Promise<void> {
-      if (terminalTarget !== staleTarget) return;
+      if (generation !== notificationGeneration || terminalTarget !== staleTarget) return;
       cancelNotification?.();
       cancelNotification = undefined;
       cancelActivationWatch?.();
@@ -533,7 +554,7 @@ export function createWindowsNotifyExtension(
       terminalTarget = undefined;
       try {
         terminalTarget = await captureTarget(ctx);
-        await dispatch(ctx, body, false);
+        await dispatch(ctx, body, false, generation);
       } catch (error) {
         reportError(ctx, error);
       }
@@ -543,11 +564,14 @@ export function createWindowsNotifyExtension(
       ctx: ExtensionContext,
       body: string,
       canRecapture = true,
+      generation = notificationGeneration,
     ): Promise<void> {
-      if (ctx.mode !== "tui" || terminalTarget === undefined) return;
+      if (ctx.mode !== "tui" || terminalTarget === undefined || generation !== notificationGeneration) return;
       const target = terminalTarget;
       try {
         const state = await deps.getTerminalState(target);
+        // Native lookups can finish after the question closes or the session shuts down.
+        if (generation !== notificationGeneration) return;
         if (state === "foreground-inactive" && !attentionActive) {
           attentionActive = true;
           deps.setTabAttention(true);
@@ -572,13 +596,13 @@ export function createWindowsNotifyExtension(
               dismissNotification();
               if (cancelNotification === dismissNotification) cancelNotification = undefined;
             }
-            if (attentionActive) {
+            if (attentionActive && !waitingForInput) {
               attentionActive = false;
               deps.setTabAttention(false);
             }
           }, async (error) => {
             if (isStaleTabTarget(error)) {
-              await recoverStaleTarget(ctx, body, target);
+              await recoverStaleTarget(ctx, body, target, generation);
               return;
             }
             reportError(ctx, error);
@@ -586,7 +610,7 @@ export function createWindowsNotifyExtension(
         }
       } catch (error) {
         if (canRecapture && isStaleTabTarget(error)) {
-          await recoverStaleTarget(ctx, body, target);
+          await recoverStaleTarget(ctx, body, target, generation);
           return;
         }
         reportError(ctx, error);
@@ -595,10 +619,21 @@ export function createWindowsNotifyExtension(
 
     pi.on("session_start", async (_event, ctx) => {
       terminalTarget = undefined;
+      waitingForInput = false;
       agentRunning = false;
       agentSignal = undefined;
       reportedError = false;
       if (ctx.mode !== "tui") return;
+
+      // Obtain the live terminal without replacing another extension's editor.
+      const previousFactory = ctx.ui.getEditorComponent();
+      ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+        if (terminalProgress?.terminal !== tui.terminal) {
+          terminalProgress?.dispose();
+          terminalProgress = controlTerminalProgress(tui.terminal, () => waitingForInput);
+        }
+        return previousFactory?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
+      });
 
       pi.on("agent_start", (_event, ctx) => {
         agentRunning = true;
@@ -617,8 +652,26 @@ export function createWindowsNotifyExtension(
 
       pi.on("ui_prompt_start", async (event, ctx) => {
         if (!agentRunning) return;
+        waitingForInput = true;
+        terminalProgress?.pause();
+        // Reassert even if an earlier completion already requested attention.
+        attentionActive = true;
+        deps.setTabAttention(true);
         const prompt = event.title?.trim();
         await dispatch(ctx, prompt ? `Input needed: ${prompt}` : "Input needed");
+      });
+
+      pi.on("ui_prompt_end", () => {
+        if (!waitingForInput) return;
+        waitingForInput = false;
+        notificationGeneration += 1;
+        cancelNotification?.();
+        cancelNotification = undefined;
+        cancelActivationWatch?.();
+        cancelActivationWatch = undefined;
+        if (attentionActive) deps.setTabAttention(false);
+        attentionActive = false;
+        if (agentRunning && !agentSignal?.aborted) terminalProgress?.resume();
       });
 
       try {
@@ -635,12 +688,16 @@ export function createWindowsNotifyExtension(
     });
 
     pi.on("session_shutdown", () => {
+      notificationGeneration += 1;
       cancelNotification?.();
       cancelNotification = undefined;
       cancelActivationWatch?.();
       cancelActivationWatch = undefined;
       if (attentionActive) deps.setTabAttention(false);
       attentionActive = false;
+      waitingForInput = false;
+      terminalProgress?.dispose();
+      terminalProgress = undefined;
       terminalTarget = undefined;
       agentRunning = false;
       agentSignal = undefined;

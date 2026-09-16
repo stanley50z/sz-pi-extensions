@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import childProcess, { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -791,4 +792,86 @@ test('clicking Git diff totals expands the five most changed files and clicking 
   });
   assert.equal(footer.render(120).length, 2);
   assert.equal(renderRequests, 2);
+});
+
+test('clicking the cwd path opens the session folder in the file manager', async (t) => {
+  const child = new EventEmitter();
+  child.unref = t.mock.fn();
+  const spawn = t.mock.method(childProcess, 'spawn', () => child);
+  const { default: installFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const cwd = process.platform === 'win32' ? 'C:/Users/demo/my project' : '/tmp/my project';
+  const ctx = createFakeContext({ cwd });
+
+  installFooterExtension(pi);
+  await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  footer.render(80);
+  const result = footer.handleMouse({
+    type: 'click', button: 'left', x: 0, y: 0,
+    screenX: 0, screenY: 0, width: 80, height: 2,
+    shift: false, alt: false, ctrl: false, clickCount: 1,
+  });
+
+  const command = { win32: 'explorer.exe', darwin: 'open', linux: 'xdg-open' }[process.platform];
+  const directory = process.platform === 'win32' ? 'C:\\Users\\demo\\my project' : '/tmp/my project';
+  assert.equal(spawn.mock.callCount(), 1);
+  assert.deepEqual(spawn.mock.calls[0].arguments, [command, [directory], { detached: true, stdio: 'ignore' }]);
+  assert.equal(child.unref.mock.callCount(), 1);
+  assert.deepEqual(result, { handled: true, render: false });
+  assert.doesNotThrow(() => child.emit('error', new Error('opener unavailable')));
+});
+
+test('cwd clicks follow the visible path after compaction, truncation, and directory changes', async (t) => {
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const spawn = t.mock.method(childProcess, 'spawn', () => child);
+  const { default: installFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({ sessionName: 'focus' });
+  const home = process.env.HOME || process.env.USERPROFILE;
+  assert.ok(home);
+  let cwd = home;
+  ctx.sessionManager.getCwd = () => cwd;
+  installFooterExtension(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  pi.events.emit('sz-git-view:update', { summary: { added: 0, deleted: 0, files: [] } });
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, createFooterData('long-feature-branch'));
+  const click = (x, overrides = {}) => footer.handleMouse({
+    type: 'click', button: 'left', x, y: 0,
+    screenX: x, screenY: 0, width: 80, height: 2,
+    shift: false, alt: false, ctrl: false, ...overrides,
+  });
+  assert.equal(click(0), undefined);
+
+  for (const scenario of [
+    { suffix: '', width: 80, text: '~', end: 1 },
+    { suffix: '项目', width: 80, text: '~/项目', end: 6 },
+    { suffix: 'project', width: 30, text: '~/project', end: 9 },
+    { suffix: 'very/long/path/to/project', width: 30, text: '~/very/long...', end: 14 },
+    { suffix: '', width: 80, text: '~', end: 1 },
+  ]) {
+    cwd = scenario.suffix ? `${home}/${scenario.suffix}` : home;
+    const line = stripVTControlCharacters(footer.render(scenario.width)[0]);
+    assert.ok(line.startsWith(scenario.text), line);
+    spawn.mock.resetCalls();
+    for (const [x, overrides] of [
+      [-1, {}], [scenario.end, {}], [scenario.end + 1, {}],
+      [line.indexOf('focus'), {}], [0, { y: 1 }],
+      [0, { button: 'right' }], [0, { type: 'press' }], [0, { type: 'drag' }],
+    ]) {
+      assert.equal(click(x, overrides), undefined);
+    }
+    assert.equal(spawn.mock.callCount(), 0);
+    assert.deepEqual(click(scenario.end - 1), { handled: true, render: false });
+    assert.equal(spawn.mock.callCount(), 1);
+    assert.deepEqual(spawn.mock.calls[0].arguments[1], [
+      process.platform === 'win32' ? join(home, scenario.suffix) : cwd,
+    ]);
+  }
+  footer.render(0);
+  spawn.mock.resetCalls();
+  assert.equal(click(0), undefined);
+  assert.equal(spawn.mock.callCount(), 0);
 });

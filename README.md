@@ -19,7 +19,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
 - **Session-aware terminal titles** formatted as `Pi - <session name>`
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
-- **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings
+- **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings. Questions waiting for input show the same solid ring until answered or dismissed, even in the active tab. Pi's busy-indicator keepalive is paused during the question so it cannot overwrite the ring; answering restores the prior busy-indicator state.
 - **Daily background Pi self-updates** with a restart notification when a new version installs
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
 - **Cross-instance runtime reloads** through `/reload-all`
@@ -86,6 +86,8 @@ Run `/reload` in existing Pi sessions afterward. Pi uses the exact filename `APP
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
 
 Built-in file and shell tools, local search tools, and subagent tools do not render result bodies or image previews. Agent reads of `SKILL.md` render as highlighted `[skill]` invocation lines outside tool-call groups, but never show the skill body. Consecutive skill reads share one line. Press Ctrl+O to switch between grouped one-line tool cards and the ultra-collapsed `+ N tool calls` summary. Subagent calls always keep a short line with their topic and harness visible. Spawn lines show the model name without its provider and the reasoning level when supplied, but never show the full delegated prompt. When a Pi child inherits its parent's model, the spawn result records that model for display, including after session restore. Background subagent completions show one summary line when collapsed and their full returned text when expanded. While children are running, the footer adds a third line with the active count and abbreviated topics, each followed by its model name without the provider and its reasoning level when available, separated by ` · `. It updates as child settings change and disappears when all children finish.
+
+Click the underlined cwd path in the footer in fullscreen mode to open the session folder in Explorer, Finder, or the Linux file manager. Shortened paths still open the full directory; the branch and session name are not clickable.
 
 The Git Diff Viewer activates when the session working directory belongs to a Git repository. Click the underlined, centered `+X −Y` footer totals in fullscreen mode to show or hide up to five files, ordered by total lines changed. The viewer runs entirely in Pi's TUI and does not start a localhost server.
 
