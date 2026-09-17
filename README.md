@@ -77,7 +77,7 @@ Run `/reload` in existing Pi sessions afterward. Pi uses the exact filename `APP
 
 ## Local workflow tools
 
-`ask_user` presents two to five choices and always includes a free-form answer. In the TUI, highlight "Type my own answer" and begin typing immediately; Pi's configured clipboard shortcut can paste text or attach an image there. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
+`ask_user` presents two to five choices and always includes a free-form answer. In the TUI, highlight "Type my own answer" and begin typing immediately; Pi's configured clipboard shortcut can paste text or attach an image there. Up/Down move the cursor within multiline and wrapped answers. Up at the very start returns to the options without discarding the draft. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
 
 `/new` opens a working-directory selector before creating the session. The active session cwd is selected by default; other existing cwds found in session history are deduplicated and ordered by most recent activity. `/neww` starts a new session in the active cwd immediately, skipping the selector.
 

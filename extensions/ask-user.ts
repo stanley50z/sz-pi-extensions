@@ -212,17 +212,21 @@ export default function askUserExtension(
             }
           };
 
+          // Keep navigation inside the custom editor unless Up is pressed at the draft's start.
           const handleInput = (data: string) => {
             if (keybindings.matches(data, "tui.select.cancel")) {
               cancel();
               return;
             }
             if (keybindings.matches(data, "tui.select.up")) {
-              optionIndex = Math.max(0, optionIndex - 1);
-              refresh();
-              return;
+              const cursor = editor.getCursor();
+              if (optionIndex !== customIndex || (cursor.line === 0 && cursor.col === 0)) {
+                optionIndex = Math.max(0, optionIndex - 1);
+                refresh();
+                return;
+              }
             }
-            if (keybindings.matches(data, "tui.select.down")) {
+            if (optionIndex !== customIndex && keybindings.matches(data, "tui.select.down")) {
               optionIndex = Math.min(customIndex, optionIndex + 1);
               refresh();
               return;
@@ -308,7 +312,7 @@ export default function askUserExtension(
               theme.fg(
                 "dim",
                 customSelected
-                  ? "Start typing • Paste shortcut inserts image/text • Enter submit • ↑ options • Esc cancel"
+                  ? "Start typing • Paste shortcut inserts image/text • Enter submit • ↑↓ move cursor • ↑ at start: options • Esc cancel"
                   : "↑↓ navigate • Enter select • Esc cancel",
               ),
             );

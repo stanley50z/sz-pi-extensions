@@ -43,11 +43,12 @@ function setup({
           (value) => { answer = value; },
         );
         component.focused = true;
+        renderedLines = component.render(renderWidth);
         for (const key of keys) {
           component.handleInput(key);
           await new Promise((resolve) => setImmediate(resolve));
+          renderedLines = component.render(renderWidth);
         }
-        renderedLines = component.render(renderWidth);
         return answer;
       },
     },
@@ -130,6 +131,53 @@ test("ask_user accepts typing immediately when the in-place custom answer is hig
     answer: "Use the team preset",
     selectedIndex: undefined,
   });
+});
+
+test("ask_user moves up and down within a multiline custom answer", async () => {
+  const state = setup({
+    keys: ["3", ..."alpha", "\n", ..."bravo", "\x1b[A", "!", "\x1b[B", "?", "\r"],
+  });
+  const result = await state.tool.execute("call-multiline", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.details.outcome, "custom");
+  assert.equal(result.details.answer, "alpha!\nbravo?");
+});
+
+test("ask_user moves up and down within a wrapped custom answer", async () => {
+  const state = setup({
+    keys: ["3", ..."abcdefghijklmnopqrst", "\x1b[A", "!", "\x1b[B", "?", "\r"],
+    renderWidth: 24,
+  });
+  const result = await state.tool.execute("call-wrapped-cursor", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.details.outcome, "custom");
+  assert.equal(result.details.answer, "ab!cdefghijklmnopqrst?");
+});
+
+test("ask_user keeps Up inside the first line until the cursor reaches the start", async () => {
+  const state = setup({ keys: ["3", ..."alpha", "\x1b[A", "!", "\r"] });
+  const result = await state.tool.execute("call-first-line", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.details.outcome, "custom");
+  assert.equal(result.details.answer, "!alpha");
+});
+
+test("ask_user returns to options only at the draft start and preserves the draft", async () => {
+  const state = setup({
+    keys: ["3", ..."alpha", "\n", ..."bravo", "\x01", "\x1b[A", "\x1b[A", "\x1b[B", "!", "\r"],
+  });
+  const result = await state.tool.execute("call-return-to-draft", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.details.outcome, "custom");
+  assert.equal(result.details.answer, "!alpha\nbravo");
+});
+
+test("ask_user navigates back to a listed option from an empty custom answer", async () => {
+  const state = setup({ keys: ["3", "\x1b[A", "\r"] });
+  const result = await state.tool.execute("call-empty-draft", params, undefined, undefined, state.ctx);
+
+  assert.equal(result.details.outcome, "selected");
+  assert.equal(result.details.answer, "Manual");
 });
 
 test("ask_user pastes and attaches a clipboard image to the custom answer", async () => {
