@@ -17,7 +17,11 @@ function setup({
   const selectCalls = [];
   const inputCalls = [];
   const customCalls = [];
-  const pi = { registerTool(definition) { tool = definition; } };
+  const events = [];
+  const pi = {
+    registerTool(definition) { tool = definition; },
+    events: { emit(name, data) { events.push({ name, data }); } },
+  };
   askUserExtension(pi, { readClipboardForCustomAnswer });
   const ctx = {
     hasUI,
@@ -60,6 +64,7 @@ function setup({
     selectCalls,
     inputCalls,
     customCalls,
+    events,
   };
 }
 
@@ -70,6 +75,49 @@ const params = {
     { label: "Manual", description: "Configure every setting" },
   ],
 };
+
+test("ask_user reports Herdr blocked only while the terminal question is open", async () => {
+  const state = setup({ mode: "tui" });
+  let answer;
+  state.ctx.ui.custom = () => new Promise((resolve) => { answer = resolve; });
+  const pending = state.tool.execute("herdr", params, undefined, undefined, state.ctx);
+  assert.deepEqual(state.events, [{
+    name: "herdr:blocked", data: { active: true, label: params.question },
+  }]);
+  answer({ kind: "selected", index: 0 });
+  await pending;
+  assert.deepEqual(state.events.at(-1), {
+    name: "herdr:blocked", data: { active: false },
+  });
+});
+
+test("ask_user clears Herdr waiting on dismissal, cancellation, and UI failure", async () => {
+  for (const outcome of ["dismissed", "cancelled", "error"]) {
+    const state = setup({ mode: "tui" });
+    const controller = new AbortController();
+    state.ctx.ui.custom = async () => {
+      if (outcome === "error") throw new Error("UI failed");
+      if (outcome === "cancelled") controller.abort();
+      return null;
+    };
+    const pending = state.tool.execute("herdr", params, controller.signal, undefined, state.ctx);
+    if (outcome === "error") await assert.rejects(pending, /UI failed/);
+    else assert.equal((await pending).details.outcome, outcome);
+    assert.deepEqual(state.events, [
+      { name: "herdr:blocked", data: { active: true, label: params.question } },
+      { name: "herdr:blocked", data: { active: false } },
+    ]);
+  }
+});
+
+test("ask_user does not report Herdr waiting without a terminal prompt", async () => {
+  for (const options of [{ mode: "rpc" }, { hasUI: false }, { mode: "tui", aborted: true }]) {
+    const state = setup(options);
+    const signal = options.aborted ? AbortSignal.abort() : undefined;
+    await state.tool.execute("herdr", params, signal, undefined, state.ctx);
+    assert.deepEqual(state.events, []);
+  }
+});
 
 test("ask_user presents choices and returns the selected answer", async () => {
   const state = setup({ mode: "rpc", choice: "Automatic — Use recommended defaults" });

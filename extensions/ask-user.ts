@@ -166,6 +166,8 @@ export default function askUserExtension(
           | { kind: "custom"; answer: string; images: ImageContent[] }
           | null;
 
+        // Herdr owns the indicator and notification, so the waiting state closes on every exit path.
+        pi.events.emit("herdr:blocked", { active: true, label: params.question });
         const answer = await ctx.ui.custom<TuiAnswer>((tui, theme, keybindings, done) => {
           const customIndex = params.options.length;
           const editorTheme: EditorTheme = {
@@ -341,6 +343,8 @@ export default function askUserExtension(
               signal?.removeEventListener("abort", cancel);
             },
           };
+        }).finally(() => {
+          pi.events.emit("herdr:blocked", { active: false });
         });
 
         if (signal?.aborted) {

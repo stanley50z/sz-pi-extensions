@@ -17,6 +17,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **First-class local search** through `find_files` and `search_text`
 - **Compact tool output** for built-ins and local search, with short subagent call lines kept visible without exposing their prompts
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
+- **Herdr question notifications** via its installed Pi integration. `ask_user` reports the built-in blocked state while a terminal question is open and clears it on answer, dismissal, cancellation, or UI failure. Notifications follow Herdr's settings.
 - **Session-aware terminal titles** showing just the session name inside Herdr (`HERDR_ENV=1`), or `Pi - <session name>` in standalone terminals
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
 - **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings. Questions waiting for input show the same solid ring until answered or dismissed, even in the active tab. Pi's busy-indicator keepalive is paused during the question so it cannot overwrite the ring; answering restores the prior busy-indicator state.
