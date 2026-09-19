@@ -28,11 +28,20 @@ test("install-ketch clones the configured repository outside tracked package fil
     { cwd: source, stdio: "ignore" },
   );
 
-  execFileSync(
+  const output = execFileSync(
     process.execPath,
-    ["scripts/install-ketch.mjs", "--repository", source, "--destination", destination],
-    { cwd: process.cwd(), stdio: "pipe" },
+    [
+      "scripts/install-ketch.mjs",
+      "--repository",
+      source,
+      "--destination",
+      destination,
+      "--skip-cli",
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
   );
+
+  assert.doesNotMatch(output, /ketch CLI/);
 
   assert.equal(readFileSync(join(destination, "README.md"), "utf8").trim(), "temporary ketch fixture");
   const origin = execFileSync("git", ["remote", "get-url", "origin"], {

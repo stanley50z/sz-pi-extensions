@@ -41,7 +41,7 @@ npm install
 pi install ~/sz-pi-extensions
 ```
 
-This keeps the package editable — changes you make are live after restarting Pi. No sync step needed. The npm install fetches the pinned public [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) dependency, clones [Ketch](https://github.com/1broseidon/ketch) into `node_modules/ketch`, and exposes both packages' Pi resources. Because `node_modules/` is ignored, generated dependency contents remain separate from this repository's tracked files.
+This keeps the package editable — changes you make are live after restarting Pi. No sync step needed. The npm install fetches the pinned public [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) dependency, clones [Ketch](https://github.com/1broseidon/ketch) into `node_modules/ketch`, installs the `ketch` CLI with Go when it is missing from `PATH`, and exposes both packages' Pi resources. Because `node_modules/` is ignored, generated dependency contents remain separate from this repository's tracked files.
 
 On Windows, session startup registers a per-user `pi-notify:` URI handler under `HKCU`. Notification clicks launch the bundled hidden focus helper with a one-time token, which selects the existing Pi tab without opening another Terminal window, brings its window forward, and focuses the terminal text area for immediate typing. No administrator access is required.
 
@@ -152,7 +152,7 @@ Native Pi subagents load the fast-mode extension and share its synchronized stat
 
 ## Ketch
 
-Pi discovers Ketch's bundled skill from the ignored checkout and uses the `ketch` CLI as its research transport. The CLI must be available on `PATH`; install it using one of Ketch's supported methods if needed:
+Pi discovers Ketch's bundled skill from the ignored checkout and uses the `ketch` CLI as its research transport. `npm install` clones the skill checkout and runs `go install github.com/1broseidon/ketch@latest` when the CLI is not already on `PATH`. That step is best effort, so a missing Go toolchain or a failed clone warns instead of aborting the install; install the CLI by hand in that case:
 
 ```bash
 go install github.com/1broseidon/ketch@latest
