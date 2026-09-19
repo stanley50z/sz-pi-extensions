@@ -23,6 +23,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings. Questions waiting for input show the same solid ring until answered or dismissed, even in the active tab. Pi's busy-indicator keepalive is paused during the question so it cannot overwrite the ring; answering restores the prior busy-indicator state.
 - **Daily background Pi self-updates** with a restart notification when a new version installs
 - **Persistent, synchronized OpenAI fast mode** through `/fast`
+- **Same-terminal Pi restarts** through `/reopen`, resuming the current conversation
 - **Cross-instance runtime reloads** through `/reload-all`
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
@@ -83,6 +84,8 @@ Run `/reload` in existing Pi sessions afterward. Pi uses the exact filename `APP
 Sessions are automatically named after the first answered prompt using the active model. Bare `/name` regenerates the title; `/name <title>` keeps Pi's manual naming behavior. Naming requests preserve the endpoint resolved by authentication, so Copilot business accounts do not use the catalog's default individual endpoint. Provider errors are reported rather than silently leaving the session unnamed.
 
 `/new` opens a working-directory selector before creating the session. The active session cwd is selected by default; other existing cwds found in session history are deduplicated and ordered by most recent activity. `/neww` starts a new session in the active cwd immediately, skipping the selector.
+
+`/reopen` launches a fresh Pi process in the same terminal and project, resuming the exact saved conversation with the current model and reasoning level. Use it after updating Pi itself; `/reload` only refreshes resources. It preserves CLI configuration without replaying startup prompts, attachments, or session-selection actions. The command requires an idle TUI session saved to disk and refuses RPC, active turns, and queued messages. Pi finishes terminal and extension cleanup before relaunching. The disposed process waits synchronously for its replacement so the shell cannot steal terminal input; repeated reopens retain one waiting parent per restart until you quit.
 
 `/reload-all` reloads extensions, skills, prompts, themes, and context files in every running normal Pi instance that has this package loaded. Busy instances reload after their current turn settles; Automode sessions are left unchanged.
 
