@@ -17,7 +17,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **First-class local search** through `find_files` and `search_text`
 - **Compact tool output** for built-ins and local search, with short subagent call lines kept visible without exposing their prompts
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
-- **Session-aware terminal titles** formatted as `Pi - <session name>`
+- **Session-aware terminal titles** showing just the session name inside Herdr (`HERDR_ENV=1`), or `Pi - <session name>` in standalone terminals
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
 - **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings. Questions waiting for input show the same solid ring until answered or dismissed, even in the active tab. Pi's busy-indicator keepalive is paused during the question so it cannot overwrite the ring; answering restores the prior busy-indicator state.
 - **Daily background Pi self-updates** with a restart notification when a new version installs
@@ -26,7 +26,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
 - **Toggleable skill suites** through `/ss`, grouping optional skills and tools
 - **Codex-style manual skill invocation** through `$skill-name` with `$` autocomplete
-- **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5.1 to `high`
+- **Model-aware reasoning controls** through `/r`, with Luna/DeepSeek defaulting to `max` and Sol/Fable 5.1 to `high`. Completed arguments such as `/r l` submit with one Enter. `minimal` is excluded.
 - **Git view** and other local workflow helpers
 
 ## Install
@@ -107,7 +107,7 @@ Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill
 
 The input's top-right `[ commit ]` button submits `$commit` without changing your draft. Clicks work in fullscreen mode; when Pi is busy, the commit is queued as a follow-up. In regular scrollback mode, type `$commit` instead.
 
-Explicitly invoking `$commit` or `/skill:commit`, including through the commit button, switches reasoning to `low` before skill expansion. The agent reading the commit skill on its own does not change reasoning. Reasoning stays low after an explicit invocation until changed; non-reasoning models remain `off`.
+Explicitly invoking `$commit` or `/skill:commit`, including through the commit button, switches to `deepseek/deepseek-flash` for the commit run, using the usual model reasoning defaults rather than forcing `low`. After the run settles, the previous model and reasoning are restored unless you selected another model in the meantime. Invocations during ongoing work wait until that work settles before switching. Missing Flash availability or authentication blocks the commit with an error instead of using another model. The agent reading the commit skill on its own does not change the model or reasoning.
 
 ## Skill suites
 

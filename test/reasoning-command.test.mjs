@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setImmediate } from 'node:timers/promises';
+import { CombinedAutocompleteProvider, Editor } from '@earendil-works/pi-tui';
 
 const moduleUrl = new URL('../extensions/reasoning-command.ts', import.meta.url).href;
 
@@ -79,6 +81,53 @@ test('/r shorthand arguments set the requested thinking level', async () => {
     assert.deepEqual(pi.selectedLevels, [expected]);
     assert.deepEqual(ctx.notifications, [{ message: `Reasoning: ${expected}`, type: 'info' }]);
   }
+});
+
+test('/r l applies low reasoning after one Enter in the Pi editor', async () => {
+  const pi = await install();
+  const command = pi.commands.get('r');
+  const ctx = createFakeContext();
+  const editor = new Editor({ requestRender() {} }, {
+    borderColor: (text) => text,
+    selectList: {
+      selectedPrefix: (text) => text,
+      selectedText: (text) => text,
+      description: (text) => text,
+      scrollInfo: (text) => text,
+      noMatch: (text) => text,
+    },
+  });
+  editor.setAutocompleteProvider(new CombinedAutocompleteProvider([
+    { name: 'r', ...command },
+  ], process.cwd()));
+  const submissions = [];
+  editor.onSubmit = (text) => {
+    submissions.push(text);
+    void command.handler(text.slice('/r '.length), ctx);
+  };
+
+  for (const character of '/r l') {
+    editor.handleInput(character);
+    await setImmediate();
+  }
+  editor.handleInput('\r');
+
+  assert.deepEqual(submissions, ['/r l']);
+  assert.deepEqual(pi.selectedLevels, ['low']);
+});
+
+test('/r hides completions for complete arguments but keeps incomplete suggestions', async () => {
+  const pi = await install();
+  const { getArgumentCompletions } = pi.commands.get('r');
+
+  for (const argument of ['o', 'l', 'm', 'h', 'xh', 'off', 'low', 'medium', 'high', 'xhigh', 'max', ' L ']) {
+    assert.equal(getArgumentCompletions(argument), null, argument);
+  }
+  assert.deepEqual(getArgumentCompletions('lo'), [{ value: 'low', label: 'low' }]);
+  assert.deepEqual(getArgumentCompletions('').map(({ value }) => value), [
+    'o', 'l', 'm', 'h', 'xh', 'off', 'low', 'medium', 'high', 'xhigh', 'max',
+  ]);
+  assert.equal(getArgumentCompletions('min'), null);
 });
 
 test('/r full level names set the requested thinking level', async () => {

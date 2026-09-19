@@ -13,6 +13,9 @@ function createFakePi() {
   return {
     handlers,
     thinkingLevel: 'high',
+    model: { provider: 'openai-codex', id: 'original' },
+    getThinkingLevel() { return this.thinkingLevel; },
+    async setModel(model) { this.model = model; this.thinkingLevel = 'max'; return true; },
     setThinkingLevel(level) { this.thinkingLevel = level; },
     on(event, handler) {
       handlers.set(event, handler);
@@ -36,14 +39,75 @@ async function install() {
   return pi;
 }
 
-test('commit invocation switches reasoning to low before expansion and leaves it there', async () => {
+function modelContext(pi) {
+  return {
+    get model() { return pi.model; },
+    isIdle: () => true,
+    modelRegistry: {
+      find(provider, id) {
+        assert.equal(provider, 'deepseek');
+        assert.equal(id, 'deepseek-flash');
+        return { provider, id };
+      },
+    },
+    ui: { notify() {} },
+  };
+}
+
+test('explicit commit uses DeepSeek Flash then restores the previous model and reasoning', async () => {
   for (const text of ['$commit', 'please $commit now', '/skill:commit', '/skill:commit staged only']) {
     const pi = await install();
-    pi.handlers.get('input')({ text });
-    assert.equal(pi.thinkingLevel, 'low', text);
-    pi.handlers.get('input')({ text: 'next task' });
-    assert.equal(pi.thinkingLevel, 'low');
+    const original = pi.model;
+    const ctx = modelContext(pi);
+    await pi.handlers.get('input')({ text }, ctx);
+    assert.deepEqual(pi.model, { provider: 'deepseek', id: 'deepseek-flash' });
+    assert.equal(pi.thinkingLevel, 'max');
+    await pi.handlers.get('agent_settled')({}, ctx);
+    assert.equal(pi.model, original);
+    assert.equal(pi.thinkingLevel, 'high');
   }
+});
+
+test('a commit queued during work does not change the running model', async () => {
+  const pi = await install();
+  const ctx = modelContext(pi);
+  const sent = [];
+  pi.sendUserMessage = (...args) => sent.push(args);
+  ctx.isIdle = () => false;
+  const result = await pi.handlers.get('input')({ text: '$commit', streamingBehavior: 'followUp' }, ctx);
+  assert.deepEqual(result, { action: 'handled' });
+  assert.equal(pi.model.id, 'original');
+  ctx.isIdle = () => true;
+  await pi.handlers.get('agent_settled')({}, ctx);
+  assert.deepEqual(sent, [[[{ type: 'text', text: '$commit' }], { expandPromptTemplates: true }]]);
+});
+
+test('unavailable Flash or missing authentication blocks the commit without switching models', async () => {
+  for (const failure of ['missing-model', 'missing-auth']) {
+    const pi = await install();
+    const ctx = modelContext(pi);
+    const notices = [];
+    ctx.ui.notify = (...args) => notices.push(args);
+    if (failure === 'missing-model') ctx.modelRegistry.find = () => undefined;
+    else pi.setModel = async () => false;
+    assert.deepEqual(await pi.handlers.get('input')({ text: '$commit' }, ctx), { action: 'handled' });
+    assert.equal(pi.model.id, 'original');
+    assert.equal(pi.thinkingLevel, 'high');
+    assert.equal(notices[0][1], 'error');
+  }
+});
+
+test('restoration waits through retries and does not overwrite a manual model selection', async () => {
+  const pi = await install();
+  const ctx = modelContext(pi);
+  await pi.handlers.get('input')({ text: '$commit' }, ctx);
+  await pi.handlers.get('agent_end')?.({}, ctx);
+  assert.equal(pi.model.id, 'deepseek-flash');
+  pi.model = { provider: 'other', id: 'manually-selected' };
+  pi.thinkingLevel = 'medium';
+  await pi.handlers.get('agent_settled')({}, ctx);
+  assert.equal(pi.model.id, 'manually-selected');
+  assert.equal(pi.thinkingLevel, 'medium');
 });
 
 test('agent reading the loaded commit skill preserves reasoning', async () => {
@@ -56,8 +120,9 @@ test('agent reading the loaded commit skill preserves reasoning', async () => {
 test('other skills and ordinary commit discussion preserve reasoning', async () => {
   for (const text of ['$tdd', '/skill:commit-extra', 'explain commit', '`$commit`']) {
     const pi = await install();
-    pi.handlers.get('input')({ text });
+    await pi.handlers.get('input')({ text }, modelContext(pi));
     assert.equal(pi.thinkingLevel, 'high', text);
+    assert.equal(pi.model.id, 'original');
   }
 });
 
@@ -305,7 +370,7 @@ test("submitting '$skill-name' rewrites to Pi's native skill command", async () 
     text: '$commit and push',
     images: undefined,
     source: 'interactive',
-  }, {});
+  }, modelContext(pi));
 
   assert.deepEqual(result, {
     action: 'transform',

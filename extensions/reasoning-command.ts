@@ -57,6 +57,8 @@ export default function (pi: ExtensionAPI) {
     description: "Change reasoning level",
     getArgumentCompletions: (prefix: string) => {
       const normalized = prefix.trim().toLowerCase();
+      // Completed arguments must submit on Enter, not confirm an autocomplete item.
+      if (parseThinkingLevel(normalized)) return null;
       const supported = new Set(availableLevels(currentModel));
       const values = ["o", "l", "m", "h", "xh", ...LEVELS];
       const items = values

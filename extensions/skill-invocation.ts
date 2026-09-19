@@ -1,6 +1,8 @@
 import {
   CustomEditor,
   type ExtensionAPI,
+  type ExtensionContext,
+  type InputEvent,
   type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -138,8 +140,30 @@ function firstLoadedSkillMention(pi: ExtensionAPI, text: string): SkillMention |
   return undefined;
 }
 
-/** Expands skill mentions and lowers reasoning for explicit commit invocations, not agent skill reads. */
+/** Expands skill mentions and uses DeepSeek Flash for explicitly requested commit runs. */
 export default function skillInvocationExtension(pi: ExtensionAPI): void {
+  let previous: { model: NonNullable<ExtensionContext["model"]>; thinking: ReturnType<ExtensionAPI["getThinkingLevel"]> } | undefined;
+
+  const queuedCommits: InputEvent[] = [];
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    const saved = previous;
+    previous = undefined;
+    if (saved && ctx.model?.provider === "deepseek" && ctx.model.id === "deepseek-flash") {
+      if (await pi.setModel(saved.model)) {
+        pi.setThinkingLevel(saved.thinking);
+      } else {
+        ctx.ui.notify("Could not restore the model used before the commit. Select it with /model.", "error");
+      }
+    }
+    const queued = queuedCommits.shift();
+    if (queued) {
+      pi.sendUserMessage([
+        { type: "text", text: queued.text },
+        ...(queued.images ?? []),
+      ], { expandPromptTemplates: true });
+    }
+  });
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.addAutocompleteProvider((current) => createSkillAutocompleteProvider(pi, current));
     const previousFactory = ctx.ui.getEditorComponent?.();
@@ -154,10 +178,25 @@ export default function skillInvocationExtension(pi: ExtensionAPI): void {
     });
   });
 
-  pi.on("input", (event) => {
+  pi.on("input", async (event, ctx) => {
     const mention = firstLoadedSkillMention(pi, event.text);
     if (mention?.name === "commit" || /^\/skill:commit(?:\s|$)/.test(event.text)) {
-      pi.setThinkingLevel("low");
+      if (!ctx.isIdle()) {
+        queuedCommits.push(event);
+        ctx.ui.notify("Commit queued until the current work finishes.", "info");
+        return { action: "handled" };
+      }
+      const model = ctx.modelRegistry.find("deepseek", "deepseek-flash");
+      if (!model || !ctx.model) {
+        ctx.ui.notify("Commit not started: deepseek/deepseek-flash or the current model is unavailable. Refresh /model first.", "error");
+        return { action: "handled" };
+      }
+      const saved = previous ?? { model: ctx.model, thinking: pi.getThinkingLevel() };
+      if (!await pi.setModel(model)) {
+        ctx.ui.notify("Commit not started: configure DeepSeek authentication with /login.", "error");
+        return { action: "handled" };
+      }
+      previous = saved;
     }
     if (!mention) return { action: "continue" };
 

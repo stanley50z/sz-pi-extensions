@@ -6,6 +6,15 @@ import {
   createWindowsNotifyExtension,
 } from "../extensions/windows-notify.ts";
 
+test.beforeEach((t) => {
+  const previous = process.env.HERDR_ENV;
+  delete process.env.HERDR_ENV;
+  t.after(() => {
+    if (previous === undefined) delete process.env.HERDR_ENV;
+    else process.env.HERDR_ENV = previous;
+  });
+});
+
 test("notification protocol uses the windowless Windows Script Host", () => {
   assert.equal(
     buildWindowsProtocolCommand("C:\\Windows", "C:\\Pi Extensions\\windows-notify-launch.vbs"),
@@ -102,6 +111,13 @@ test("captures the calling Pi tab even when another terminal tab is selected", a
   assert.equal(state.protocolRegistrations, 1);
   assert.deepEqual(state.capturedTitles, ["Pi notification target test"]);
   assert.deepEqual(state.terminalTitles, ["Pi notification target test", "Pi - Notification work"]);
+});
+
+test("notification target capture restores an unprefixed title inside Herdr", async () => {
+  process.env.HERDR_ENV = "1";
+  const state = setup();
+  await state.handlers.get("session_start")({}, state.ctx);
+  assert.deepEqual(state.terminalTitles, ["Pi notification target test", "Notification work"]);
 });
 
 test("native Pi subagents do not install notification hooks", async () => {

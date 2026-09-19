@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import sessionTitle, { RESTORE_TERMINAL_TITLE_EVENT } from "../extensions/session-title.ts";
 
+test.beforeEach((t) => {
+  const previous = process.env.HERDR_ENV;
+  delete process.env.HERDR_ENV;
+  t.after(() => {
+    if (previous === undefined) delete process.env.HERDR_ENV;
+    else process.env.HERDR_ENV = previous;
+  });
+});
+
 function setup(initialName) {
   const handlers = new Map();
   const eventHandlers = new Map();
@@ -35,6 +44,24 @@ test("terminal title can be restored after a child process overwrites it", async
   await state.handlers.get("session_start")({}, state.ctx);
   state.eventHandlers.get(RESTORE_TERMINAL_TITLE_EVENT)();
   assert.equal(state.titles.at(-1), "Pi - Restore me");
+});
+
+test("Herdr titles omit the Pi prefix on startup, rename, and restore", async () => {
+  process.env.HERDR_ENV = "1";
+  const state = setup("Review Herdr extensions");
+  await state.handlers.get("session_start")({}, state.ctx);
+  assert.equal(state.titles.at(-1), "Review Herdr extensions");
+
+  state.setSessionName("Clean session titles");
+  await state.handlers.get("session_info_changed")({ name: "Clean session titles" }, state.ctx);
+  assert.equal(state.titles.at(-1), "Clean session titles");
+
+  state.eventHandlers.get(RESTORE_TERMINAL_TITLE_EVENT)();
+  assert.equal(state.titles.at(-1), "Clean session titles");
+
+  state.setSessionName(undefined);
+  await state.handlers.get("session_info_changed")({ name: undefined }, state.ctx);
+  assert.equal(state.titles.at(-1), "Untitled session");
 });
 
 test("untitled sessions still use a Pi-prefixed title", async () => {
