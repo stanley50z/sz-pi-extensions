@@ -148,6 +148,67 @@ test('persists a sanitized session name without adding a conversation turn', asy
   assert.equal(pi.sentMessages.length, 0);
 });
 
+test('names Copilot sessions using the account endpoint resolved by authentication', async () => {
+  const { createSessionAutoNameExtension } = await freshModule();
+  const pi = createFakePi();
+  const model = {
+    provider: 'github-copilot',
+    id: 'claude-fable-5.1',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.individual.githubcopilot.com',
+  };
+  const ctx = createFakeContext([
+    messageEntry('user', 'Fix session auto naming for GitHub Copilot.'),
+    messageEntry('assistant', 'I will inspect the naming request.'),
+  ], {
+    model,
+    auth: {
+      ok: true,
+      apiKey: 'test-key',
+      headers: { 'Copilot-Integration-Id': 'vscode-chat' },
+      baseUrl: 'https://api.business.githubcopilot.com',
+    },
+  });
+
+  createSessionAutoNameExtension({
+    complete: async (requestModel, _context, options) => {
+      assert.equal(options.apiKey, 'test-key');
+      assert.deepEqual(options.headers, { 'Copilot-Integration-Id': 'vscode-chat' });
+      return requestModel.baseUrl === 'https://api.business.githubcopilot.com'
+        ? { stopReason: 'stop', content: [{ type: 'text', text: 'Fix Copilot session auto naming' }] }
+        : { stopReason: 'error', content: [], errorMessage: '421 Misdirected Request' };
+    },
+  })(pi);
+
+  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+
+  assert.deepEqual(pi.setNames, ['Fix Copilot session auto naming']);
+  assert.equal(model.baseUrl, 'https://api.individual.githubcopilot.com');
+});
+
+test('surfaces naming provider errors without saving partial output and allows retry', async () => {
+  const { createSessionAutoNameExtension } = await freshModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext([
+    messageEntry('user', 'Fix session auto naming.'),
+    messageEntry('assistant', 'I will inspect the naming request.'),
+  ]);
+  let attempts = 0;
+  createSessionAutoNameExtension({
+    complete: async () => ++attempts === 1
+      ? { stopReason: 'error', errorMessage: '421 Misdirected Request', content: [{ type: 'text', text: 'Partial title' }] }
+      : { stopReason: 'stop', content: [{ type: 'text', text: 'Fix session auto naming' }] },
+  })(pi);
+
+  await assert.rejects(
+    pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx),
+    /421 Misdirected Request/,
+  );
+  assert.deepEqual(pi.setNames, []);
+  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  assert.deepEqual(pi.setNames, ['Fix session auto naming']);
+});
+
 test('runs manual auto-naming when /name has no argument', async () => {
   const { createSessionAutoNameExtension } = await freshModule();
   const pi = createFakePi('Old Session Name');

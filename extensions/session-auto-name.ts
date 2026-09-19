@@ -91,6 +91,7 @@ function buildNamingPrompt(rounds: ConversationRound[]): string {
     .join("\n\n");
 }
 
+// Generate a title with the active model and its account-specific request endpoint.
 async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameDependencies): Promise<string | null> {
   if (!ctx.model) return null;
 
@@ -106,13 +107,19 @@ async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameD
     timestamp: Date.now(),
   };
 
+  const requestModel = "baseUrl" in auth && typeof auth.baseUrl === "string"
+    ? { ...ctx.model, baseUrl: auth.baseUrl }
+    : ctx.model;
   const response = await deps.complete(
-    ctx.model,
+    requestModel,
     { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
     { apiKey: auth.apiKey, headers: auth.headers, signal: ctx.signal },
   );
 
   if (response.stopReason === "aborted") return null;
+  if (response.stopReason === "error") {
+    throw new Error(response.errorMessage || "Session naming request failed");
+  }
 
   const responseText = response.content
     .filter((part): part is { type: "text"; text: string } => part.type === "text")

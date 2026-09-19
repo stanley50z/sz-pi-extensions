@@ -79,6 +79,8 @@ Run `/reload` in existing Pi sessions afterward. Pi uses the exact filename `APP
 
 `ask_user` presents two to five choices and always includes a free-form answer. In the TUI, highlight "Type my own answer" and begin typing immediately; Pi's configured clipboard shortcut can paste text or attach an image there. Up/Down move the cursor within multiline and wrapped answers. Up at the very start returns to the options without discarding the draft. `/copy-all` copies the active branch's user and assistant messages while omitting tool output and hidden reasoning.
 
+Sessions are automatically named after the first answered prompt using the active model. Bare `/name` regenerates the title; `/name <title>` keeps Pi's manual naming behavior. Naming requests preserve the endpoint resolved by authentication, so Copilot business accounts do not use the catalog's default individual endpoint. Provider errors are reported rather than silently leaving the session unnamed.
+
 `/new` opens a working-directory selector before creating the session. The active session cwd is selected by default; other existing cwds found in session history are deduplicated and ordered by most recent activity. `/neww` starts a new session in the active cwd immediately, skipping the selector.
 
 `/reload-all` reloads extensions, skills, prompts, themes, and context files in every running normal Pi instance that has this package loaded. Busy instances reload after their current turn settles; Automode sessions are left unchanged.
