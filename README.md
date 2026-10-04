@@ -22,7 +22,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
 - **State-aware Windows notifications** with click-to-focus behavior, persistent background alerts, and inactive-tab attention rings. Questions waiting for input show the same solid ring until answered or dismissed, even in the active tab. Pi's busy-indicator keepalive is paused during the question so it cannot overwrite the ring; answering restores the prior busy-indicator state.
 - **Daily background Pi self-updates** with a restart notification when a new version installs
-- **Persistent, synchronized OpenAI fast mode** through `/fast`
+- **Session-local OpenAI speed modes** through `/fast` and `/ultrafast`
 - **Same-terminal Pi restarts** through `/reopen`, resuming the current conversation
 - **Cross-instance runtime reloads** through `/reload-all`
 - **Synced Pi keybinding defaults**, including Ctrl+Backspace for deleting the previous word
@@ -145,13 +145,19 @@ On session startup, the package runs `pi update --self` in the background when i
 
 ## Fast mode
 
-Use `/fast`, `/fast on`, or `/fast off` to control OpenAI priority processing. The setting is stored in `~/.pi/agent/openai-fast-mode.json` (or the configured `PI_CODING_AGENT_DIR`) and restored when Pi starts. Changes are synchronized to every currently running Pi session, including native Pi subagents. Codex subagents inherit the same state as Codex's `priority` service tier and refresh it before every turn. The Pi provider hook applies only to models using the OpenAI Responses or OpenAI Codex Responses APIs.
+Use `/fast` for OpenAI priority processing or `/ultrafast` for the `ultrafast` service tier. Each command toggles its mode on or off. Enabling either replaces the other. `/ultrafast` takes no arguments; `/fast` also accepts `on`, `off`, and `status`. The footer shows `⚡fast` or `⚡ultrafast` for compatible request APIs.
+
+Modes are session-local. New sessions start off unless launched with `--fast`. Changes are not saved, synchronized, or propagated to subagents. The old `~/.pi/agent/openai-fast-mode.json` is ignored and left untouched. The provider hook applies only to models using the OpenAI Responses or OpenAI Codex Responses APIs.
+
+[Ultrafast in Codex](https://learn.chatgpt.com/docs/agent-configuration/speed) requires GPT-6 Astra and Pro $500 or an eligible Enterprise/Edu plan. [API availability](https://developers.openai.com/api/docs/guides/ultrafast-mode) differs. The extension requests the selected tier; OpenAI enforces model and account eligibility and reports request failures. A `supported` status means the request API is compatible, not that the account has access.
+
+Validation logs and failure stack traces for this change are saved in `~/.pi/agent/logs/fast-mode-validation/`.
 
 ## Subagents
 
 [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) is maintained as an independent public package but composed here as a pinned dependency. Pi still installs only `sz-pi-extensions`; a local wrapper loads the dependency's extension with the shared compact renderer, while the dependency's skill is discovered directly. It provides the complete subagent implementation through persistent native Pi, Codex, and Claude Code sessions.
 
-Native Pi subagents load the fast-mode extension and share its synchronized state. Codex subagents receive that state through the Codex app-server `serviceTier` setting. Claude Code uses its own harness, so Pi's `/fast` setting does not apply to Claude children.
+Native Pi subagents load the speed-mode extension with their own session-local state. The parent's `/fast` and `/ultrafast` settings do not propagate to Pi, Codex, or Claude Code children.
 
 ## Ketch
 
