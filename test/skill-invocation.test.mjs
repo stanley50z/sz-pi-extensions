@@ -45,8 +45,8 @@ function modelContext(pi) {
     isIdle: () => true,
     modelRegistry: {
       find(provider, id) {
-        assert.equal(provider, 'deepseek');
-        assert.equal(id, 'deepseek-flash');
+        assert.equal(provider, 'openai-codex');
+        assert.equal(id, 'gpt-6.1-sol');
         return { provider, id };
       },
     },
@@ -54,35 +54,55 @@ function modelContext(pi) {
   };
 }
 
-test('explicit commit uses DeepSeek Flash then restores the previous model and reasoning', async () => {
+test('explicit commit uses subscription GPT 6.1 Sol with low reasoning then restores the previous model and reasoning', async () => {
   for (const text of ['$commit', 'please $commit now', '/skill:commit', '/skill:commit staged only']) {
     const pi = await install();
     const original = pi.model;
     const ctx = modelContext(pi);
     await pi.handlers.get('input')({ text }, ctx);
-    assert.deepEqual(pi.model, { provider: 'deepseek', id: 'deepseek-flash' });
-    assert.equal(pi.thinkingLevel, 'max');
+    assert.deepEqual(pi.model, { provider: 'openai-codex', id: 'gpt-6.1-sol' });
+    assert.equal(pi.thinkingLevel, 'low');
     await pi.handlers.get('agent_settled')({}, ctx);
     assert.equal(pi.model, original);
     assert.equal(pi.thinkingLevel, 'high');
   }
 });
 
+test('a commit already using Sol temporarily lowers reasoning and restores it afterward', async () => {
+  const pi = await install();
+  pi.model = { provider: 'openai-codex', id: 'gpt-6.1-sol' };
+  const original = pi.model;
+  const ctx = modelContext(pi);
+  await pi.handlers.get('input')({ text: '$commit' }, ctx);
+  assert.equal(pi.thinkingLevel, 'low');
+  await pi.handlers.get('agent_settled')({}, ctx);
+  assert.equal(pi.model, original);
+  assert.equal(pi.thinkingLevel, 'high');
+});
+
 test('a commit queued during work does not change the running model', async () => {
   const pi = await install();
   const ctx = modelContext(pi);
+  const original = pi.model;
   const sent = [];
   pi.sendUserMessage = (...args) => sent.push(args);
   ctx.isIdle = () => false;
   const result = await pi.handlers.get('input')({ text: '$commit', streamingBehavior: 'followUp' }, ctx);
   assert.deepEqual(result, { action: 'handled' });
   assert.equal(pi.model.id, 'original');
+  assert.equal(pi.thinkingLevel, 'high');
   ctx.isIdle = () => true;
   await pi.handlers.get('agent_settled')({}, ctx);
   assert.deepEqual(sent, [[[{ type: 'text', text: '$commit' }], { expandPromptTemplates: true }]]);
+  await pi.handlers.get('input')({ text: sent[0][0][0].text }, ctx);
+  assert.deepEqual(pi.model, { provider: 'openai-codex', id: 'gpt-6.1-sol' });
+  assert.equal(pi.thinkingLevel, 'low');
+  await pi.handlers.get('agent_settled')({}, ctx);
+  assert.equal(pi.model, original);
+  assert.equal(pi.thinkingLevel, 'high');
 });
 
-test('unavailable Flash or missing authentication blocks the commit without switching models', async () => {
+test('unavailable Sol or missing authentication blocks the commit without switching models', async () => {
   for (const failure of ['missing-model', 'missing-auth']) {
     const pi = await install();
     const ctx = modelContext(pi);
@@ -102,7 +122,8 @@ test('restoration waits through retries and does not overwrite a manual model se
   const ctx = modelContext(pi);
   await pi.handlers.get('input')({ text: '$commit' }, ctx);
   await pi.handlers.get('agent_end')?.({}, ctx);
-  assert.equal(pi.model.id, 'deepseek-flash');
+  assert.equal(pi.model.id, 'gpt-6.1-sol');
+  assert.equal(pi.thinkingLevel, 'low');
   pi.model = { provider: 'other', id: 'manually-selected' };
   pi.thinkingLevel = 'medium';
   await pi.handlers.get('agent_settled')({}, ctx);

@@ -113,7 +113,7 @@ Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill
 
 The input's top-right `[ commit ]` button submits `$commit` without changing your draft. Clicks work in fullscreen mode; when Pi is busy, the commit is queued as a follow-up. In regular scrollback mode, type `$commit` instead.
 
-Explicitly invoking `$commit` or `/skill:commit`, including through the commit button, switches to `deepseek/deepseek-flash` for the commit run, using the usual model reasoning defaults rather than forcing `low`. After the run settles, the previous model and reasoning are restored unless you selected another model in the meantime. Invocations during ongoing work wait until that work settles before switching. Missing Flash availability or authentication blocks the commit with an error instead of using another model. The agent reading the commit skill on its own does not change the model or reasoning.
+Explicitly invoking `$commit` or `/skill:commit`, including through the commit button, switches to OpenAI subscriptions `openai-codex/gpt-6.1-sol` with `low` reasoning for the commit run. After the run settles, the previous model and reasoning are restored unless you selected another model in the meantime. Invocations during ongoing work wait until that work settles before switching. Missing Sol availability or OpenAI subscription authentication blocks the commit with an error instead of using another model. The agent reading the commit skill on its own does not change the model or reasoning.
 
 ## Skill suites
 

@@ -140,7 +140,7 @@ function firstLoadedSkillMention(pi: ExtensionAPI, text: string): SkillMention |
   return undefined;
 }
 
-/** Expands skill mentions and uses DeepSeek Flash for explicitly requested commit runs. */
+/** Expands skill mentions and uses subscription GPT 6.1 Sol with low reasoning for explicit commit runs. */
 export default function skillInvocationExtension(pi: ExtensionAPI): void {
   let previous: { model: NonNullable<ExtensionContext["model"]>; thinking: ReturnType<ExtensionAPI["getThinkingLevel"]> } | undefined;
 
@@ -149,7 +149,7 @@ export default function skillInvocationExtension(pi: ExtensionAPI): void {
   pi.on("agent_settled", async (_event, ctx) => {
     const saved = previous;
     previous = undefined;
-    if (saved && ctx.model?.provider === "deepseek" && ctx.model.id === "deepseek-flash") {
+    if (saved && ctx.model?.provider === "openai-codex" && ctx.model.id === "gpt-6.1-sol") {
       if (await pi.setModel(saved.model)) {
         pi.setThinkingLevel(saved.thinking);
       } else {
@@ -186,16 +186,17 @@ export default function skillInvocationExtension(pi: ExtensionAPI): void {
         ctx.ui.notify("Commit queued until the current work finishes.", "info");
         return { action: "handled" };
       }
-      const model = ctx.modelRegistry.find("deepseek", "deepseek-flash");
+      const model = ctx.modelRegistry.find("openai-codex", "gpt-6.1-sol");
       if (!model || !ctx.model) {
-        ctx.ui.notify("Commit not started: deepseek/deepseek-flash or the current model is unavailable. Refresh /model first.", "error");
+        ctx.ui.notify("Commit not started: openai-codex/gpt-6.1-sol or the current model is unavailable. Refresh /model first.", "error");
         return { action: "handled" };
       }
       const saved = previous ?? { model: ctx.model, thinking: pi.getThinkingLevel() };
       if (!await pi.setModel(model)) {
-        ctx.ui.notify("Commit not started: configure DeepSeek authentication with /login.", "error");
+        ctx.ui.notify("Commit not started: configure OpenAI subscription authentication with /login.", "error");
         return { action: "handled" };
       }
+      pi.setThinkingLevel("low");
       previous = saved;
     }
     if (!mention) return { action: "continue" };
