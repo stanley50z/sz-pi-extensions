@@ -147,11 +147,13 @@ On session startup, the package runs `pi update --self` in the background when i
 
 Use `/fast` for OpenAI priority processing or `/ultrafast` for the `ultrafast` service tier. Each command toggles its mode on or off. Enabling either replaces the other. `/ultrafast` takes no arguments; `/fast` also accepts `on`, `off`, and `status`. The footer shows `⚡fast` or `⚡ultrafast` for compatible request APIs.
 
-Modes are session-local. New sessions start off unless launched with `--fast`. Changes are not saved, synchronized, or propagated to subagents. The old `~/.pi/agent/openai-fast-mode.json` is ignored and left untouched. The provider hook applies only to models using the OpenAI Responses or OpenAI Codex Responses APIs.
+Speed is one of three peer levels: `normal`, `fast`, or `ultrafast`. Commands save the selected level to `<project-directory>/.pi/openai-fast-mode.json`, for example `{"level":"fast"}`. New sessions in that exact working directory, including Pi subagents, restore the saved level. Other directories and already-running sessions are unaffected. Without a saved choice, sessions start at `normal`. `--fast` overrides the saved level for that invocation without changing the file. `/fast off` or toggling the active mode off saves `normal`.
+
+The old global `~/.pi/agent/openai-fast-mode.json` and `PI_OPENAI_FAST_MODE` are still ignored. The provider hook applies only to models using the OpenAI Responses or OpenAI Codex Responses APIs. Switching to an incompatible model does not erase the saved speed level.
 
 [Ultrafast in Codex](https://learn.chatgpt.com/docs/agent-configuration/speed) requires GPT-6 Astra and Pro $500 or an eligible Enterprise/Edu plan. [API availability](https://developers.openai.com/api/docs/guides/ultrafast-mode) differs. The extension requests the selected tier; OpenAI enforces model and account eligibility and reports request failures. A `supported` status means the request API is compatible, not that the account has access.
 
-Validation logs and failure stack traces for this change are saved in `~/.pi/agent/logs/fast-mode-validation/`.
+Invalid project settings and failed saves are reported as extension errors, with stack traces in `<project-directory>/.pi/logs/openai-speed.log` when writable. A failed save leaves the active level unchanged. Validation logs and test failure stack traces are saved in `~/.pi/agent/logs/fast-mode-validation/`.
 
 ## Subagents
 
