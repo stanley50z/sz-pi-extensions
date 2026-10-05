@@ -640,6 +640,80 @@ test("ultra-collapsed view combines consecutive tool-only turns into the active 
   assert.deepEqual(calls.slice(1).map((call) => renderText(call)), [[], [], []]);
 });
 
+test("clicking a six-call summary expands every call and any card collapses the group", async () => {
+  const { tools, handlers } = install();
+  const calls = [
+    { type: "toolCall", id: "click-1", name: "edit", arguments: { path: "src/use-reading.ts" } },
+    { type: "toolCall", id: "click-2", name: "read", arguments: { path: "a.ts" } },
+    { type: "toolCall", id: "click-3", name: "read", arguments: { path: "b.ts" } },
+    { type: "toolCall", id: "click-4", name: "bash", arguments: { command: "echo test" } },
+    { type: "toolCall", id: "click-5", name: "write", arguments: { path: "result.ts" } },
+    { type: "toolCall", id: "click-6", name: "edit", arguments: { path: "final.ts" } },
+  ];
+  await handlers.get("message_end")({ message: { role: "assistant", content: calls.slice(0, 3) } });
+  await handlers.get("message_end")({ message: { role: "assistant", content: calls.slice(3) } });
+  await handlers.get("message_end")({ message: { role: "assistant", content: [
+    { type: "text", text: "Separate work\nin another group" },
+    { type: "toolCall", id: "other-group", name: "read", arguments: { path: "other.ts" } },
+  ] } });
+  const otherGroup = () => tools.get("read").renderCall({ path: "other.ts" }, theme, {
+    toolCallId: "other-group", expanded: false, invalidate() {},
+  });
+
+  const components = [];
+  const contexts = calls.map((call, index) => ({
+    toolCallId: call.id,
+    expanded: false,
+    isPartial: false,
+    invalidate() {
+      components[index] = tools.get(call.name).renderCall(call.arguments, theme, contexts[index]);
+    },
+  }));
+  contexts.forEach((context) => context.invalidate());
+  const visible = () => components.flatMap((component) => renderText(component)).filter(Boolean);
+  // Pi's click region toggles only the clicked call unless its renderer handles it.
+  const click = (index) => {
+    const handled = components[index].handleMouse?.({ type: "click", button: "left" });
+    if (!handled?.handled) {
+      contexts[index].expanded = !contexts[index].expanded;
+      contexts[index].invalidate();
+    }
+  };
+
+  assert.deepEqual(visible(), ["+ 6 tool calls"]);
+  click(0);
+  assert.deepEqual(visible(), [
+    "edit src/use-reading.ts", "read a.ts", "read b.ts", "$ echo test",
+    "write result.ts", "edit final.ts",
+  ]);
+  assert.deepEqual(renderText(otherGroup()), ["+ 1 tool call"]);
+  click(2);
+  assert.deepEqual(visible(), ["+ 6 tool calls"]);
+
+  // The global keyboard toggle still uses compact same-tool cards.
+  contexts.forEach((context) => {
+    context.expanded = true;
+    context.invalidate();
+  });
+  const compactCards = [
+    "edit src/use-reading.ts", "read a.ts and 1 file", "$ echo test",
+    "write result.ts", "edit final.ts",
+  ];
+  assert.deepEqual(visible(), compactCards);
+  click(0);
+  assert.deepEqual(visible(), ["+ 6 tool calls"]);
+  contexts.forEach((context) => {
+    context.expanded = false;
+    context.invalidate();
+  });
+  assert.deepEqual(visible(), ["+ 6 tool calls"]);
+  contexts.forEach((context) => {
+    context.expanded = true;
+    context.invalidate();
+  });
+  assert.deepEqual(visible(), compactCards);
+});
+
 test("ultra-collapsed view summarizes a streaming call before its group is indexed", () => {
   const bash = install().tools.get("bash");
   const call = bash.renderCall(

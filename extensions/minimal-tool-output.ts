@@ -45,6 +45,7 @@ type ToolGroup = {
 
 type UltraCollapsedGroup = ToolGroup & {
   callIds: Set<string>;
+  expanded?: boolean;
 };
 
 type SkillReadGroup = {
@@ -69,6 +70,7 @@ type MinimalToolOutputState = {
   skillReadGroups: Map<string, SkillReadGroup>;
   inlineNarratives: Set<string>;
   renderInvalidators: Map<string, () => void>;
+  renderedExpansion: Map<string, boolean>;
   minimalToolOptions: Map<string, MinimalToolOutputOptions>;
   activeUltraCollapsedGroup?: UltraCollapsedGroup;
 };
@@ -84,10 +86,12 @@ const sharedState = sharedGlobal.__szPiMinimalToolOutputStateV1 ??= {
   skillReadGroups: new Map<string, SkillReadGroup>(),
   inlineNarratives: new Set<string>(),
   renderInvalidators: new Map<string, () => void>(),
+  renderedExpansion: new Map<string, boolean>(),
   minimalToolOptions: new Map<string, MinimalToolOutputOptions>(),
 };
 
 sharedState.skillReadGroups ??= new Map<string, SkillReadGroup>();
+sharedState.renderedExpansion ??= new Map<string, boolean>();
 
 const toolCache = new Map<string, BuiltInTools>();
 const {
@@ -96,6 +100,7 @@ const {
   skillReadGroups,
   inlineNarratives,
   renderInvalidators,
+  renderedExpansion,
   minimalToolOptions,
 } = sharedState;
 
@@ -121,6 +126,34 @@ class OneLine implements Component {
   }
 
   invalidate(): void {}
+}
+
+// Handles group clicks before Pi's per-call click region, keeping every member in sync.
+class ToolGroupToggle implements Component {
+  private readonly child: Component;
+  private readonly group: UltraCollapsedGroup;
+  private readonly expanded: boolean;
+
+  constructor(child: Component, group: UltraCollapsedGroup, expanded: boolean) {
+    this.child = child;
+    this.group = group;
+    this.expanded = expanded;
+  }
+
+  render(width: number): string[] {
+    return this.child.render(width);
+  }
+
+  invalidate(): void {
+    this.child.invalidate();
+  }
+
+  handleMouse(event: { type: string; button?: string }) {
+    if (event.type !== "click" || event.button !== "left") return undefined;
+    this.group.expanded = !this.expanded;
+    for (const id of this.group.callIds) renderInvalidators.get(id)?.();
+    return { handled: true };
+  }
 }
 
 function getBuiltInTools(cwd: string): BuiltInTools {
@@ -423,20 +456,37 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
         return new Container();
       }
 
-      // Ctrl+O still owns Pi's binary `expanded` flag: false is ultra-collapsed,
-      // while true is our more detailed (but still result-free) collapsed view.
-      if (!context.expanded && !options.alwaysShowCall) {
-        const group = ultraCollapsedGroups.get(context.toolCallId);
+      const ultraGroup = ultraCollapsedGroups.get(context.toolCallId);
+      const previousExpanded = renderedExpansion.get(context.toolCallId);
+      renderedExpansion.set(context.toolCallId, context.expanded);
+      // Ctrl+O resets a local click override and retains the global compact-card view.
+      if (
+        ultraGroup?.expanded !== undefined &&
+        previousExpanded !== undefined && previousExpanded !== context.expanded
+      ) {
+        delete ultraGroup.expanded;
+        for (const id of ultraGroup.callIds) {
+          if (id !== context.toolCallId) renderInvalidators.get(id)?.();
+        }
+      }
+      const expanded = ultraGroup?.expanded ?? context.expanded;
+      const clickable = (component: Component) => ultraGroup
+        ? new ToolGroupToggle(component, ultraGroup, expanded)
+        : component;
+
+      if (!expanded && !options.alwaysShowCall) {
+        const group = ultraGroup;
         if (group && group.firstId !== context.toolCallId) return new Container();
         const count = group?.count ?? 1;
         const countText = `+ ${count} tool ${count === 1 ? "call" : "calls"}`;
         if (group?.narrative) {
-          return renderNarrative(group.narrative, group.narrativeType, countText, theme);
+          return clickable(renderNarrative(group.narrative, group.narrativeType, countText, theme));
         }
-        return new OneLine(theme.fg("muted", countText));
+        return clickable(new OneLine(theme.fg("muted", countText)));
       }
 
-      const group = collapsedGroups.get(context.toolCallId);
+      // A group click reveals each counted call, including consecutive same-tool calls.
+      const group = ultraGroup?.expanded ? undefined : collapsedGroups.get(context.toolCallId);
       if (group?.firstId !== undefined && group.firstId !== context.toolCallId) {
         return new Container();
       }
@@ -458,16 +508,15 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
       const box = new Box(1, 1, (text) => theme.bg(background, text));
       box.addChild(line);
 
-      const ultraGroup = ultraCollapsedGroups.get(context.toolCallId);
       if (ultraGroup?.firstId === context.toolCallId && ultraGroup.narrative) {
         const container = new Container();
         container.addChild(
           renderNarrative(ultraGroup.narrative, ultraGroup.narrativeType, undefined, theme),
         );
         container.addChild(box);
-        return container;
+        return clickable(container);
       }
-      return box;
+      return clickable(box);
     },
     renderResult(result, _options, theme, context) {
       const args = (context.args ?? {}) as Record<string, unknown>;
@@ -520,6 +569,7 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
   skillReadGroups.clear();
   inlineNarratives.clear();
   renderInvalidators.clear();
+  renderedExpansion.clear();
   sharedState.activeUltraCollapsedGroup = undefined;
 
   pi.registerMarkdownTransformer((markdown, context) => {
@@ -550,6 +600,7 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
     skillReadGroups.clear();
     inlineNarratives.clear();
     renderInvalidators.clear();
+    renderedExpansion.clear();
     sharedState.activeUltraCollapsedGroup = undefined;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "message") continue;
