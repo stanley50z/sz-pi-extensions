@@ -177,7 +177,7 @@ Model-display validation logs, saved spawn metadata, and failure stack traces ar
 
 ## Claude Code provider
 
-[`pi-claude-bridge`](https://github.com/elidickinson/pi-claude-bridge) is pinned to `0.9.1`, bundled in this package, and discovered directly through the manifest. No separate `pi install` is needed. It requires Pi 0.86.1 or newer and an authenticated Claude Code installation. Check authentication with `claude auth status`, then run `/reload` and select a model such as `claude-bridge/claude-fable-5-1` with `/model`. Installing the provider does not change your default model or the existing Copilot/subagent preferences.
+[`pi-claude-bridge`](https://github.com/elidickinson/pi-claude-bridge) is pinned to `0.9.1`, bundled in this package, and discovered directly through the manifest. No separate `pi install` is needed. It requires Pi 0.86.1 or newer and an authenticated Claude Code installation. Check authentication with `claude auth status`, then run `/reload` and select a model such as `claude-bridge/claude-fable-5-1` with `/model`. Installing the provider does not change your default model. The package's synced instructions prefer Pi subagents with `claude-bridge` for Claude models, with native Claude Code as an alternative.
 
 The optional `AskClaude` tool stays off by default because this stack already provides native subagents. Machine-specific subscription settings belong in `~/.pi/agent/claude-bridge.json`, not this repository. For a Max subscription, use:
 
