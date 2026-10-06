@@ -604,6 +604,12 @@ test('footer adds a short third line only while subagents are running', async ()
       footer.render(160)[2],
       '1 subagent running · turn-delivery-research · sonnet · off',
     );
+    snapshots = [{ ...snapshots[0], model: 'github-copilot/claude-fable-5-1' }];
+    notify();
+    assert.equal(
+      footer.render(160)[2],
+      '1 subagent running · turn-delivery-research · fable-5-1 · off',
+    );
     disconnect();
 
     pi.events.emit('sz-subagents:running', {

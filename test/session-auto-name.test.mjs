@@ -97,6 +97,29 @@ function createFakeContext(branch, overrides = {}) {
   };
 }
 
+test('names bridge sessions through the session registry as an isolated one-off request', async () => {
+  const { default: install } = await freshModule();
+  const pi = createFakePi();
+  const model = { provider: 'claude-bridge', id: 'claude-haiku-4-5', api: 'claude-bridge' };
+  const ctx = createFakeContext([
+    messageEntry('user', 'Test the Claude bridge installation.'),
+    messageEntry('assistant', 'The bridged file read succeeded.'),
+  ], { model });
+  const calls = [];
+  ctx.modelRegistry.complete = async (...args) => {
+    calls.push(args);
+    return { stopReason: 'stop', content: [{ type: 'text', text: 'Test Claude bridge installation' }] };
+  };
+
+  install(pi);
+  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], model);
+  assert.equal(calls[0][2].cacheRetention, 'none');
+  assert.deepEqual(pi.setNames, ['Test Claude bridge installation']);
+});
+
 test('generates a session name after the first user prompt receives an answer', async () => {
   const { createSessionAutoNameExtension } = await freshModule();
   const calls = [];

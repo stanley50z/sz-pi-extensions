@@ -288,7 +288,7 @@ test('/ultrafast has no argument completions and rejects arguments without chang
 test('real Pi sessions restore all three levels through slash commands', async () => {
   const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } =
     await import('@earendil-works/pi-coding-agent');
-  const { getModel } = await import('@earendil-works/pi-ai');
+  const { getModel } = await import('@earendil-works/pi-ai/compat');
   const cwd = createAgentDir();
   const agentDir = createAgentDir();
   const sessions = [];

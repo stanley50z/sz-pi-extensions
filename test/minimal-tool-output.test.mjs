@@ -436,6 +436,8 @@ test("spawn call settings handle omitted arguments and reasoning off in both vie
     [{}, "subagent_spawn"],
     [{ name: "review", harness: "pi" }, "subagent_spawn review with pi"],
     [{ model: "sonnet" }, "subagent_spawn sonnet"],
+    [{ model: "claude-fable-5-1" }, "subagent_spawn fable-5-1"],
+    [{ model: "github-copilot/claude-fable-5-1" }, "subagent_spawn fable-5-1"],
     [{ reasoning_effort: "off" }, "subagent_spawn off"],
     [
       { name: "review", harness: "claude", model: "sonnet", reasoning_effort: "medium" },
@@ -484,6 +486,102 @@ test("spawn rows retain the inherited model after execution and session restore"
       ]);
     }
   }
+});
+
+test("native spawn rows retain the resolved default model after execution and restore", async () => {
+  let snapshot = { id: "sa-1", name: "smoke-test", status: "running" };
+  const listeners = new Set();
+  const source = {
+    list: () => [{ id: "sa-2", name: "other-child", status: "running", model: "sonnet" }, snapshot],
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const makeTool = () => withMinimalSubagentOutput({
+    name: "subagent_spawn",
+    label: "Spawn Subagent",
+    description: "Start a child session",
+    parameters: { type: "object", properties: {} },
+    async execute(_id, args) {
+      assert.equal(args.model, undefined, "display must not choose the native model");
+      setImmediate(() => {
+        snapshot = { ...snapshot, model: "claude-opus-5-5" };
+        for (const listener of listeners) listener();
+      });
+      return {
+        content: [{ type: "text", text: "Started sa-1 “smoke-test” with claude in C:/test." }],
+        details: { retained: true },
+      };
+    },
+  }, source);
+  const tool = makeTool();
+  const args = { name: "smoke-test", harness: "claude" };
+  const result = await tool.execute("native", args, undefined, undefined, {
+    model: { provider: "openai-codex", id: "gpt-6-astra" },
+  });
+  assert.equal(result.details.subagentModel, "claude-opus-5-5");
+  assert.equal(result.details.retained, true);
+  assert.equal(listeners.size, 0, "startup listener must be released");
+
+  // Restored rows must not need a running native session or today's parent model.
+  for (const renderer of [tool, withMinimalSubagentOutput({ ...tool })]) {
+    const row = new ToolExecutionComponent(
+      "subagent_spawn", "native", args, {}, renderer, { requestRender() {} }, process.cwd(),
+    );
+    row.updateResult(JSON.parse(JSON.stringify(result)));
+    assert.deepEqual(renderText(row).filter(Boolean), [
+      "subagent_spawn smoke-test with claude · opus-5-5",
+    ]);
+  }
+});
+
+test("native spawn metadata releases its listener when startup is cancelled", async () => {
+  const listeners = new Set();
+  const source = {
+    list: () => [{ id: "sa-1", name: "cancelled", status: "running" }],
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const tool = withMinimalSubagentOutput({
+    name: "subagent_spawn",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return { content: [{ type: "text", text: "Started sa-1 “cancelled” with claude in C:/test." }], details: {} };
+    },
+  }, source);
+  const controller = new AbortController();
+  const pending = tool.execute("cancelled", { harness: "claude" }, controller.signal, undefined, {});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(listeners.size, 1);
+  controller.abort(new Error("Cancelled startup"));
+  await assert.rejects(pending, /Cancelled startup/);
+  assert.equal(listeners.size, 0);
+});
+
+test("failed native startup does not invent a model or wait forever", async () => {
+  const listeners = new Set();
+  const source = {
+    list: () => [{ id: "sa-1", name: "failed", status: "error" }],
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const tool = withMinimalSubagentOutput({
+    name: "subagent_spawn",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return { content: [{ type: "text", text: "Started sa-1 “failed” with claude in C:/test." }], details: {} };
+    },
+  }, source);
+  const result = await tool.execute("failed", { harness: "claude" }, undefined, undefined, {
+    model: { provider: "openai-codex", id: "gpt-6-astra" },
+  });
+  assert.equal(result.details.subagentModel, undefined);
+  assert.equal(listeners.size, 0);
 });
 
 test("subagent status publishes only children that are still running", () => {

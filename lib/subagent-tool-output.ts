@@ -76,7 +76,7 @@ function subagentRendering(name: string): MinimalToolOutputOptions {
         const reasoning = stringArg(args, "reasoning_effort");
         detail = [
           childName && harness ? `${childName} with ${harness}` : childName ?? harness,
-          model?.replace(/^[^/]+\//, ""),
+          model?.replace(/^[^/]+\//, "").replace(/^claude-/, ""),
           reasoning,
         ].filter(Boolean).join(" · ");
       } else if (name === "subagent_check") {
@@ -131,9 +131,42 @@ export const renderSubagentResult: MessageRenderer = (message, { expanded }, the
   return box;
 };
 
-// Persist Pi's inherited model with the result so restored rows do not use today's parent model.
+// Native spawn responses contain only text; bind startup metadata by their returned session id.
+async function resolvedSpawnModel(
+  content: unknown,
+  source: SubagentStatusSource,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const id = messageText(content).match(/^Started (sa-\d+)\s/)?.[1];
+  if (!id) throw new Error("Subagent spawn response is missing its session id.");
+  signal?.throwIfAborted();
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      unsubscribe();
+      signal?.removeEventListener("abort", abort);
+    };
+    const abort = () => { cleanup(); reject(signal?.reason); };
+    const check = () => {
+      const snapshot = source.list().find((child) => child.id === id);
+      if (!snapshot) {
+        cleanup();
+        reject(new Error(`Subagent ${id} disappeared during startup.`));
+      } else if (snapshot.model || snapshot.status !== "running") {
+        cleanup();
+        resolve(snapshot.model);
+      }
+    };
+    const unsubscribe = source.subscribe(check);
+    signal?.addEventListener("abort", abort, { once: true });
+    check();
+  });
+}
+
+// Persist the inherited or native-resolved model so restored rows retain the actual settings.
 export function withMinimalSubagentOutput<TParams extends TSchema, TDetails>(
   tool: ToolDefinition<TParams, TDetails>,
+  source?: SubagentStatusSource,
 ): ToolDefinition<TParams, TDetails> {
   if (!SUBAGENT_TOOL_NAMES.has(tool.name)) return tool;
   const minimal = withMinimalToolOutput(tool, subagentRendering(tool.name));
@@ -147,8 +180,11 @@ export function withMinimalSubagentOutput<TParams extends TSchema, TDetails>(
         ? `${ctx.model.provider}/${ctx.model.id}`
         : undefined;
       const result = await tool.execute(id, params, signal, onUpdate, ctx);
-      return inheritedModel
-        ? { ...result, details: { ...result.details, subagentModel: inheritedModel } }
+      const model = inheritedModel ?? (source
+        ? await resolvedSpawnModel(result.content, source, signal)
+        : undefined);
+      return model
+        ? { ...result, details: { ...result.details, subagentModel: model } }
         : result;
     },
     renderCall(args, theme, context) {

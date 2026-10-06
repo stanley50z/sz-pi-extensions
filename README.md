@@ -17,6 +17,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **First-class local search** through `find_files` and `search_text`
 - **Compact tool output** for built-ins and local search, with short subagent call lines kept visible without exposing their prompts
 - **Native multi-harness subagents** through the separate `sz-pi-subagents` package
+- **Claude Code-backed models** through the bundled `pi-claude-bridge` provider, with its optional `AskClaude` tool left off
 - **Herdr question notifications** via its installed Pi integration. `ask_user` reports the built-in blocked state while a terminal question is open and clears it on answer, dismissal, cancellation, or UI failure. Notifications follow Herdr's settings.
 - **Session-aware terminal titles** showing just the session name inside Herdr (`HERDR_ENV=1`), or `Pi - <session name>` in standalone terminals
 - **Live agent-turn timing** above the prompt editor, retained as the most recent completed turn duration
@@ -42,7 +43,7 @@ npm install
 pi install ~/sz-pi-extensions
 ```
 
-This keeps the package editable — changes you make are live after restarting Pi. No sync step needed. The npm install fetches the pinned public [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) dependency, clones [Ketch](https://github.com/1broseidon/ketch) into `node_modules/ketch`, installs the `ketch` CLI with Go when it is missing from `PATH`, and exposes both packages' Pi resources. Because `node_modules/` is ignored, generated dependency contents remain separate from this repository's tracked files.
+This keeps the package editable — changes you make are live after restarting Pi. No sync step needed. The npm install fetches the pinned public [`sz-pi-subagents`](https://github.com/stanley50z/sz-pi-subagents) and [`pi-claude-bridge`](https://www.npmjs.com/package/pi-claude-bridge) dependencies, clones [Ketch](https://github.com/1broseidon/ketch) into `node_modules/ketch`, installs the `ketch` CLI with Go when it is missing from `PATH`, and exposes their Pi resources. Because `node_modules/` is ignored, generated dependency contents remain separate from this repository's tracked files.
 
 On Windows, session startup registers a per-user `pi-notify:` URI handler under `HKCU`. Notification clicks launch the bundled hidden focus helper with a one-time token, which selects the existing Pi tab without opening another Terminal window, brings its window forward, and focuses the terminal text area for immediate typing. No administrator access is required.
 
@@ -52,7 +53,8 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 {
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions",
+      "node_modules/pi-claude-bridge/src/index.ts"
     ],
     "skills": [
       "./skills",
@@ -91,7 +93,7 @@ Sessions are automatically named after the first answered prompt using the activ
 
 `find_files` and `search_text` provide structured wrappers around [`fd`](https://github.com/sharkdp/fd) and [`ripgrep`](https://github.com/BurntSushi/ripgrep). Both executables must be available on `PATH`; search output is bounded, with complete truncated results saved to a temporary file.
 
-Built-in file and shell tools, local search tools, and subagent tools do not render result bodies or image previews. Agent reads of `SKILL.md` render as highlighted `[skill]` invocation lines outside tool-call groups, but never show the skill body. Consecutive skill reads share one line. Press Ctrl+O to switch between grouped one-line tool cards and the ultra-collapsed `+ N tool calls` summary. In fullscreen mode, clicking a summary reveals every call in that group; clicking any revealed card collapses the whole group. Result bodies stay hidden. Subagent calls always keep a short line with their topic and harness visible. Spawn lines show the model name without its provider and the reasoning level when supplied, but never show the full delegated prompt. When a Pi child inherits its parent's model, the spawn result records that model for display, including after session restore. Background subagent completions show one summary line when collapsed and their full returned text when expanded. While children are running, the footer adds a third line with the active count and abbreviated topics, each followed by its model name without the provider and its reasoning level when available, separated by ` · `. It updates as child settings change and disappears when all children finish.
+Built-in file and shell tools, local search tools, and subagent tools do not render result bodies or image previews. Agent reads of `SKILL.md` render as highlighted `[skill]` invocation lines outside tool-call groups, but never show the skill body. Consecutive skill reads share one line. Press Ctrl+O to switch between grouped one-line tool cards and the ultra-collapsed `+ N tool calls` summary. In fullscreen mode, clicking a summary reveals every call in that group; clicking any revealed card collapses the whole group. Result bodies stay hidden. Subagent calls always keep a short line with their topic and harness visible. Spawn lines show the model name without its provider or `claude-` prefix and the reasoning level when supplied, but never show the full delegated prompt. Spawn results record Pi's inherited model or the model reported during native CLI startup, including Claude Code's default when no model is supplied. Native spawn calls return once the model is known or startup ends; the child task continues in the background. The recorded model remains visible after session restore. Background subagent completions show one summary line when collapsed and their full returned text when expanded. While children are running, the footer adds a third line with the active count and abbreviated topics, each followed by its model name without the provider or `claude-` prefix and its reasoning level when available, separated by ` · `. It updates as child settings change and disappears when all children finish.
 
 Tool-group click validation logs and failure stack traces are saved in `~/.pi/agent/logs/tool-expansion-validation/`.
 
@@ -163,6 +165,31 @@ Invalid project settings and failed saves are reported as extension errors, with
 
 Native Pi subagents load the speed-mode extension with their own session-local state. The parent's `/fast` and `/ultrafast` settings do not propagate to Pi, Codex, or Claude Code children.
 
+Model-display validation logs, saved spawn metadata, and failure stack traces are kept in `~/.pi/agent/logs/subagent-model-validation/`. Native Claude Code transcripts are managed by Claude Code under `~/.claude/projects/`; subagent completion output includes the transcript path.
+
+## Claude Code provider
+
+[`pi-claude-bridge`](https://github.com/elidickinson/pi-claude-bridge) is pinned to `0.9.1`, bundled in this package, and discovered directly through the manifest. No separate `pi install` is needed. It requires Pi 0.86.1 or newer and an authenticated Claude Code installation. Check authentication with `claude auth status`, then run `/reload` and select a model such as `claude-bridge/claude-fable-5-1` with `/model`. Installing the provider does not change your default model or the existing Copilot/subagent preferences.
+
+The optional `AskClaude` tool stays off by default because this stack already provides native subagents. Machine-specific subscription settings belong in `~/.pi/agent/claude-bridge.json`, not this repository. For a Max subscription, use:
+
+```json
+{
+  "askClaude": { "enabled": false },
+  "provider": {
+    "plan": "max",
+    "longContextExtraUsage": false,
+    "strictMcpConfig": true
+  }
+}
+```
+
+Use `"pro"` for a Pro subscription. `longContextExtraUsage` stays off to avoid opting into metered long-context usage. Project `.pi/claude-bridge.json` settings override the global file. Session naming uses the session model registry so extension providers work; bridge naming requests run as isolated one-off summaries instead of modifying the conversation.
+
+For debugging, start Pi with `CLAUDE_BRIDGE_DEBUG=1`. The bridge persists diagnostics and error stack traces to `~/.pi/agent/claude-bridge.log`, with Claude Code subprocess logs in `~/.pi/agent/cc-cli-logs/`. `PI_CODING_AGENT_DIR` changes that root, and `CLAUDE_BRIDGE_DEBUG_PATH` overrides the bridge log path. Debug logs can contain conversation and file content; review them before sharing. The bridge does not configure native crash dumps.
+
+Local installation validation logs, JSONL smoke-test events, and failure stack traces are saved in `~/.pi/agent/logs/claude-bridge-validation/`. Validation covers model discovery, a real Claude Code-backed response with a Pi `read` call, automatic naming, and npm tarball inclusion.
+
 ## Ketch
 
 Pi discovers Ketch's bundled skill from the ignored checkout and uses the `ketch` CLI as its research transport. `npm install` clones the skill checkout and runs `go install github.com/1broseidon/ketch@latest` when the CLI is not already on `PATH`. That step is best effort, so a missing Go toolchain or a failed clone warns instead of aborting the install; install the CLI by hand in that case:
@@ -222,6 +249,8 @@ pi --offline --no-extensions -e . --list-models
 ## Security
 
 Do not commit API keys or credentials.
+
+Run `npm audit` to check dependency advisories. After compatible security updates, rerun `npm test` and a live Claude bridge file-read check. Audit reports, test output, bridge diagnostics, and smoke-test events are saved in `~/.pi/agent/logs/dependency-security-validation/` for local update validation.
 
 - Extensions run with local system permissions, so review code before installing packages from third parties.
 - Ketch configuration stores provider credentials outside this repository.

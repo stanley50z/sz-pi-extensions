@@ -1,4 +1,4 @@
-import { complete, type UserMessage } from "@earendil-works/pi-ai";
+import type { UserMessage } from "@earendil-works/pi-ai";
 import {
   CustomEditor,
   type ExtensionAPI,
@@ -18,7 +18,7 @@ Rules:
 const MAX_FIELD_CHARS = 1200;
 const MAX_TITLE_CHARS = 60;
 
-type CompleteFunction = typeof complete;
+type CompleteFunction = ExtensionContext["modelRegistry"]["complete"];
 
 export interface SessionAutoNameDependencies {
   complete: CompleteFunction;
@@ -92,7 +92,8 @@ function buildNamingPrompt(rounds: ConversationRound[]): string {
 }
 
 // Generate a title with the active model and its account-specific request endpoint.
-async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameDependencies): Promise<string | null> {
+// Bridge requests use its isolated summary path so naming cannot alter the conversation.
+async function generateSessionName(ctx: ExtensionContext, deps?: SessionAutoNameDependencies): Promise<string | null> {
   if (!ctx.model) return null;
 
   const rounds = collectAnsweredRounds(ctx);
@@ -110,10 +111,16 @@ async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameD
   const requestModel = "baseUrl" in auth && typeof auth.baseUrl === "string"
     ? { ...ctx.model, baseUrl: auth.baseUrl }
     : ctx.model;
-  const response = await deps.complete(
+  const complete = deps?.complete ?? ctx.modelRegistry.complete.bind(ctx.modelRegistry);
+  const response = await complete(
     requestModel,
     { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-    { apiKey: auth.apiKey, headers: auth.headers, signal: ctx.signal },
+    {
+      apiKey: auth.apiKey,
+      headers: auth.headers,
+      signal: ctx.signal,
+      ...(ctx.model.provider === "claude-bridge" ? { cacheRetention: "none" } : {}),
+    },
   );
 
   if (response.stopReason === "aborted") return null;
@@ -129,7 +136,8 @@ async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameD
   return sanitizeTitle(responseText);
 }
 
-export function createSessionAutoNameExtension(deps: SessionAutoNameDependencies) {
+// Install automatic and manual naming using the session's registered providers.
+export function createSessionAutoNameExtension(deps?: SessionAutoNameDependencies) {
   return function sessionAutoName(pi: ExtensionAPI) {
     let namingInFlight = false;
 
@@ -182,4 +190,4 @@ export function createSessionAutoNameExtension(deps: SessionAutoNameDependencies
   };
 }
 
-export default createSessionAutoNameExtension({ complete });
+export default createSessionAutoNameExtension();

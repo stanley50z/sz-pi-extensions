@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+test("the stack bundles and exposes the pinned Claude Code provider", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const lockfile = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
+
+  assert.equal(manifest.dependencies["pi-claude-bridge"], "0.9.1");
+  assert.ok(manifest.bundledDependencies.includes("pi-claude-bridge"));
+  assert.ok(manifest.pi.extensions.includes("node_modules/pi-claude-bridge/src/index.ts"));
+  assert.equal(lockfile.packages["node_modules/pi-claude-bridge"].version, "0.9.1");
+});
+
 test("host-provided extension packages are wildcard peers, not runtime dependencies", () => {
   const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   const lockfile = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));

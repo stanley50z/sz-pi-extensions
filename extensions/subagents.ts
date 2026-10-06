@@ -24,7 +24,7 @@ export default function minimalSubagentsExtension(pi: ExtensionAPI): void {
         return <TParams extends TSchema, TDetails>(
           tool: ToolDefinition<TParams, TDetails>,
         ): void => {
-          target.registerTool(withMinimalSubagentOutput(tool));
+          target.registerTool(withMinimalSubagentOutput(tool, manager));
         };
       }
 

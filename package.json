@@ -12,10 +12,14 @@
     "test": "node --test",
     "typecheck:ssh-image-paste": "tsc --noEmit --skipLibCheck --strict --target es2023 --module nodenext extensions/ssh-image-paste.ts"
   },
-  "bundledDependencies": ["sz-pi-subagents"],
+  "bundledDependencies": [
+    "sz-pi-subagents",
+    "pi-claude-bridge"
+  ],
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions",
+      "node_modules/pi-claude-bridge/src/index.ts"
     ],
     "skills": [
       "./skills",
@@ -24,9 +28,10 @@
     ]
   },
   "dependencies": {
-    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/77ce0f259ab8b03adf007ca6e0b22df94fa4dfc1.tar.gz",
     "linkedom": "^0.16.11",
-    "pngjs": "^7.0.0"
+    "pi-claude-bridge": "0.9.1",
+    "pngjs": "^7.0.0",
+    "sz-pi-subagents": "https://github.com/stanley50z/sz-pi-subagents/archive/77ce0f259ab8b03adf007ca6e0b22df94fa4dfc1.tar.gz"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
