@@ -18,6 +18,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { readClaudeRateLimits } from "../lib/claude-rate-limits.ts";
 import {
   readCodexRateLimits,
   type CodexRateLimitWindow,
@@ -110,7 +111,7 @@ function extractCodexRateLimitWindows(data: unknown): CodexRateLimitWindow[] | u
   return parsed;
 }
 
-function formatCodexRateLimits(
+function formatRateLimits(
   status: "hidden" | "loading" | "ready" | "error",
   windows: CodexRateLimitWindow[] | null,
 ): string | null {
@@ -193,12 +194,21 @@ function resetSpeed() {
 
 // ── extension ─────────────────────────────────────────────────────────
 
-export default function (pi: ExtensionAPI) {
+type FooterDeps = { readClaudeRateLimits: typeof readClaudeRateLimits };
+
+// Builds the footer extension; tests replace the Claude Code usage reader.
+export function createFooterExtension(deps: FooterDeps = { readClaudeRateLimits }) {
+  return (pi: ExtensionAPI) => footerExtension(pi, deps);
+}
+
+export default createFooterExtension();
+
+function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
   let _ctx: ExtensionContext | null = null;
   let gitDiffSummary = getGlobalGitViewSummary();
   let gitDetailsExpanded = false;
-  let codexRateLimitWindows: CodexRateLimitWindow[] | null = null;
-  let codexRateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
+  let rateLimitWindows: CodexRateLimitWindow[] | null = null;
+  let rateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
   let runningSubagents: RunningSubagent[] = [];
   let rateLimitRefresh: Promise<void> | null = null;
   let requestFooterRender: (() => void) | null = null;
@@ -236,10 +246,8 @@ export default function (pi: ExtensionAPI) {
 
   const unsubscribeCodexRateLimits = pi.events.on(CODEX_RATE_LIMITS_EVENT, (data) => {
     const windows = extractCodexRateLimitWindows(data);
-    if (windows === undefined) return;
-    codexRateLimitWindows = windows;
-    codexRateLimitStatus = "ready";
-    if (_ctx) installFooter(_ctx);
+    if (windows === undefined || (_ctx && rateLimitSource(_ctx) === "claude")) return;
+    showRateLimits(windows);
   });
 
   const unsubscribeRunningSubagents = pi.events.on(SUBAGENTS_RUNNING_EVENT, (data) => {
@@ -249,33 +257,47 @@ export default function (pi: ExtensionAPI) {
     requestFooterRender?.();
   });
 
-  function usesChatGptSubscription(ctx: ExtensionContext): boolean {
+  // The plan whose five-hour and weekly usage fills the centred slot, if any. Pi cannot see how
+  // Claude Code authenticates, so claude-bridge always asks and falls back to API without a plan.
+  function rateLimitSource(ctx: ExtensionContext): "codex" | "claude" | null {
+    if (ctx.model?.provider === "claude-bridge") return "claude";
     return ctx.model?.provider === "openai-codex" &&
-      Boolean(ctx.modelRegistry?.isUsingOAuth?.(ctx.model));
+      Boolean(ctx.modelRegistry?.isUsingOAuth?.(ctx.model)) ? "codex" : null;
   }
 
-  function refreshCodexRateLimits(ctx: ExtensionContext): void {
-    if (!usesChatGptSubscription(ctx)) {
-      codexRateLimitStatus = "hidden";
-      codexRateLimitWindows = null;
+  function showRateLimits(windows: CodexRateLimitWindow[] | null, status: typeof rateLimitStatus = "ready"): void {
+    rateLimitWindows = windows;
+    rateLimitStatus = status;
+    if (_ctx) installFooter(_ctx);
+  }
+
+  function refreshRateLimits(ctx: ExtensionContext): void {
+    const source = rateLimitSource(ctx);
+    if (!source) {
+      rateLimitStatus = "hidden";
+      rateLimitWindows = null;
       return;
     }
     if (rateLimitRefresh) return;
 
-    if (codexRateLimitStatus !== "ready") codexRateLimitStatus = "loading";
+    if (rateLimitStatus === "error") rateLimitStatus = "loading";
+    // A model switch during the read makes its result describe the wrong plan.
+    const current = () => _ctx !== null && rateLimitSource(_ctx) === source;
     const task = (async () => {
       try {
-        const limits = await readCodexRateLimits();
-        pi.events.emit(CODEX_RATE_LIMITS_EVENT, limits);
+        const limits = source === "claude" ? await deps.readClaudeRateLimits() : await readCodexRateLimits();
+        if (!current()) return;
+        if (!limits) showRateLimits(null, "hidden");
+        else if (source === "codex") pi.events.emit(CODEX_RATE_LIMITS_EVENT, limits);
+        else showRateLimits(limits.windows);
       } catch {
-        codexRateLimitStatus = "error";
-        codexRateLimitWindows = null;
-        if (_ctx) installFooter(_ctx);
+        if (current()) showRateLimits(null, "error");
       }
     })();
     rateLimitRefresh = task;
     void task.finally(() => {
       if (rateLimitRefresh === task) rateLimitRefresh = null;
+      if (_ctx && !current()) refreshRateLimits(_ctx);
     });
   }
 
@@ -286,11 +308,11 @@ export default function (pi: ExtensionAPI) {
     gitDetailsExpanded = false;
     resetSpeed();
     runningSubagents = [];
-    codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
-    codexRateLimitWindows = null;
+    rateLimitStatus = rateLimitSource(ctx) ? "loading" : "hidden";
+    rateLimitWindows = null;
     refreshCopilotUsage(ctx);
     installFooter(ctx);
-    refreshCodexRateLimits(ctx);
+    refreshRateLimits(ctx);
   });
 
   pi.on("session_shutdown", async () => {
@@ -355,10 +377,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("model_select", async (_event, ctx) => {
     _ctx = ctx;
     refreshCopilotUsage(ctx);
-    codexRateLimitStatus = usesChatGptSubscription(ctx) ? "loading" : "hidden";
-    codexRateLimitWindows = null;
+    rateLimitStatus = rateLimitSource(ctx) ? "loading" : "hidden";
+    rateLimitWindows = null;
     installFooter(ctx);
-    refreshCodexRateLimits(ctx);
+    refreshRateLimits(ctx);
   });
 
   pi.on("turn_end", async (_event, ctx) => {
@@ -381,7 +403,7 @@ export default function (pi: ExtensionAPI) {
     generationStart = null;
     liveOutputTokensPerSec = null;
     installFooter(ctx);
-    refreshCodexRateLimits(ctx);
+    refreshRateLimits(ctx);
   });
 
   // ── refresh after file-changing tools ──────────────────────────────
@@ -553,14 +575,15 @@ export default function (pi: ExtensionAPI) {
             );
             centreParts.push(colouredDiff);
           }
-          const rateLimitsText = formatCodexRateLimits(codexRateLimitStatus, codexRateLimitWindows);
+          const rateLimitsText = formatRateLimits(rateLimitStatus, rateLimitWindows);
+          const usingPlan = usingSubscription || ctx.model?.provider === "claude-bridge";
           if (ctx.model?.provider === "github-copilot") {
             const usage = copilotUsage.peek();
             const text = copilotText.startsWith("Copilot month:$") &&
               (usage.status !== "ready" || copilotMonth !== new Date(Date.now()).toISOString().slice(0, 7))
               ? "Copilot month:unavailable" : copilotText;
             centreParts.push(theme.fg("dim", text));
-          } else if (usingSubscription && rateLimitsText) {
+          } else if (usingPlan && rateLimitsText) {
             centreParts.push(theme.fg("dim", rateLimitsText));
           } else if (!usingSubscription) {
             centreParts.push(theme.fg("dim", "API"));

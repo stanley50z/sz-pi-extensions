@@ -425,6 +425,56 @@ test('footer centers five-hour and weekly ChatGPT subscription usage', async () 
   }
 });
 
+async function renderClaudeBridgeFooter(readPlanUsage) {
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  // Answer one tick late so the loading state is observable first.
+  const readClaudeRateLimits = async () => {
+    await tick();
+    return readPlanUsage();
+  };
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({
+    usingSubscription: false,
+    model: { provider: 'claude-bridge', id: 'claude-fable-5-1' },
+  });
+  const line = () => ctx.footerFactory({ requestRender() {} }, plainTheme, footerData).render(120)[1];
+
+  createFooterExtension({ readClaudeRateLimits })(pi);
+  await pi.handlers.get('session_start')({ reason: 'startup' }, ctx);
+  const loading = line();
+  await tick();
+  return { loading, settled: line() };
+}
+
+test('footer shows Claude plan usage for claude-bridge models instead of API', async () => {
+  const { loading, settled } = await renderClaudeBridgeFooter(async () => ({
+    windows: [
+      { usedPercent: 12.4, windowDurationMins: 300 },
+      { usedPercent: 34, windowDurationMins: 10080 },
+    ],
+  }));
+
+  assert.match(loading, /5h:… wk:…/);
+  assert.match(settled, /5h:12% wk:34%/);
+  assert.doesNotMatch(loading + settled, /\sAPI\s/);
+});
+
+test('footer shows API for claude-bridge when Claude Code has no plan limits', async () => {
+  const { settled } = await renderClaudeBridgeFooter(async () => null);
+
+  assert.match(settled, /\sAPI\s/);
+  assert.doesNotMatch(settled, /5h:|wk:/);
+});
+
+test('footer marks Claude plan usage as failed when it cannot be read', async () => {
+  const { settled } = await renderClaudeBridgeFooter(async () => {
+    throw new Error('claude unavailable');
+  });
+
+  assert.match(settled, /5h:! wk:!/);
+});
+
 test('footer updates token speed while the assistant response is streaming', async () => {
   const originalCwd = process.cwd();
   const originalNow = Date.now;

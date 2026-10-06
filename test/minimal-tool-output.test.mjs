@@ -18,6 +18,7 @@ function install({ beforeMinimal = [], afterMinimal = [] } = {}) {
   const handlers = new Map();
   const markdownTransformers = [];
   const pi = {
+    registerToolRenderer() {},
     registerTool(tool) {
       tools.set(tool.name, tool);
     },
@@ -276,6 +277,7 @@ test("separately loaded extensions share one consecutive tool-call group", async
       tools.set(tool.name, tool);
     },
     registerMarkdownTransformer() {},
+    registerToolRenderer() {},
     on(event, handler) {
       handlers.set(event, handler);
     },

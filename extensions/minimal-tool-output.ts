@@ -9,6 +9,7 @@ import {
   type ExtensionAPI,
   type Theme,
   type ToolDefinition,
+  type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { Box, Container, Markdown, truncateToWidth, type Component } from "@earendil-works/pi-tui";
@@ -55,7 +56,7 @@ type SkillReadGroup = {
 };
 
 type ToolRenderTheme = {
-  fg(color: "toolTitle" | "accent" | "muted" | "toolOutput", text: string): string;
+  fg(color: "toolTitle" | "accent" | "muted" | "toolOutput" | "error" | "warning", text: string): string;
 };
 
 export type MinimalToolOutputOptions = {
@@ -64,7 +65,24 @@ export type MinimalToolOutputOptions = {
   alwaysShowCall?: boolean;
 };
 
+type CodemodeCall = {
+  id: string;
+  name: string;
+  args: string;
+  status: "running" | "ok" | "error" | "cancelled";
+};
+
+type CodemodeCallMetadata = {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  skillName?: string;
+};
+
 type MinimalToolOutputState = {
+  codemodeCalls: Map<string, CodemodeCall[]>;
+  codemodeMetadata: Map<string, Map<string, CodemodeCallMetadata>>;
+  codemodeScriptErrors: Set<string>;
   collapsedGroups: Map<string, ToolGroup>;
   ultraCollapsedGroups: Map<string, UltraCollapsedGroup>;
   skillReadGroups: Map<string, SkillReadGroup>;
@@ -81,6 +99,9 @@ type MinimalToolOutputGlobal = typeof globalThis & {
 
 const sharedGlobal = globalThis as MinimalToolOutputGlobal;
 const sharedState = sharedGlobal.__szPiMinimalToolOutputStateV1 ??= {
+  codemodeCalls: new Map<string, CodemodeCall[]>(),
+  codemodeMetadata: new Map<string, Map<string, CodemodeCallMetadata>>(),
+  codemodeScriptErrors: new Set<string>(),
   collapsedGroups: new Map<string, ToolGroup>(),
   ultraCollapsedGroups: new Map<string, UltraCollapsedGroup>(),
   skillReadGroups: new Map<string, SkillReadGroup>(),
@@ -90,11 +111,17 @@ const sharedState = sharedGlobal.__szPiMinimalToolOutputStateV1 ??= {
   minimalToolOptions: new Map<string, MinimalToolOutputOptions>(),
 };
 
+sharedState.codemodeCalls ??= new Map<string, CodemodeCall[]>();
+sharedState.codemodeMetadata ??= new Map<string, Map<string, CodemodeCallMetadata>>();
+sharedState.codemodeScriptErrors ??= new Set<string>();
 sharedState.skillReadGroups ??= new Map<string, SkillReadGroup>();
 sharedState.renderedExpansion ??= new Map<string, boolean>();
 
 const toolCache = new Map<string, BuiltInTools>();
 const {
+  codemodeCalls,
+  codemodeMetadata,
+  codemodeScriptErrors,
   collapsedGroups,
   ultraCollapsedGroups,
   skillReadGroups,
@@ -174,7 +201,7 @@ function isToolCallContent(value: unknown): value is ToolCallContent {
 function inlineNarrative(
   content: readonly unknown[],
 ): { markdown: string; type: "assistant" | "assistant-thinking" } | undefined {
-  const narratives = content.flatMap((item) => {
+  const narratives = content.flatMap<{ markdown: string; type: "assistant" | "assistant-thinking" }>((item) => {
     if (!item || typeof item !== "object") return [];
     const value = item as { type?: unknown; text?: unknown; thinking?: unknown };
     if (value.type === "text" && typeof value.text === "string") {
@@ -293,7 +320,10 @@ function indexSkillReadGroups(calls: ToolCallContent[]): void {
 
 function indexToolGroups(content: readonly unknown[]): void {
   const calls = content.filter(isToolCallContent);
-  for (const call of calls) collapsedGroups.delete(call.id);
+  for (const call of calls) {
+    collapsedGroups.delete(call.id);
+    if (call.name === "codemode" && !codemodeCalls.has(call.id)) codemodeCalls.set(call.id, []);
+  }
   indexSkillReadGroups(calls);
 
   const builtInCalls = calls.filter(isMinimalCall);
@@ -341,7 +371,7 @@ function indexToolGroups(content: readonly unknown[]): void {
       group.callIds.add(call.id);
       ultraCollapsedGroups.set(call.id, group);
     }
-    group.count = group.callIds.size;
+    group.count = [...group.callIds].reduce((count, id) => count + callCount(id), 0);
     for (const callId of group.callIds) renderInvalidators.get(callId)?.();
   } else if (hasNarrative) {
     sharedState.activeUltraCollapsedGroup = undefined;
@@ -440,19 +470,17 @@ function formatToolCall(
   return `${title} ${detail}`;
 }
 
-export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
-  tool: ToolDefinition<TParams, TDetails>,
+// Shares compact call rendering with tools whose execution must remain untouched.
+function minimalToolRenderers(
+  name: string,
   options: MinimalToolOutputOptions = {},
-): ToolDefinition<TParams, TDetails> {
-  minimalToolOptions.set(tool.name, options);
-
+): ToolRenderers {
   return {
-    ...tool,
     renderShell: "self",
     renderCall(args, theme, context) {
       renderInvalidators.set(context.toolCallId, context.invalidate);
 
-      if (isSkillRead(tool.name, args as Record<string, unknown>)) {
+      if (isSkillRead(name, args as Record<string, unknown>)) {
         return new Container();
       }
 
@@ -477,8 +505,9 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
       if (!expanded && !options.alwaysShowCall) {
         const group = ultraGroup;
         if (group && group.firstId !== context.toolCallId) return new Container();
-        const count = group?.count ?? 1;
-        const countText = `+ ${count} tool ${count === 1 ? "call" : "calls"}`;
+        const count = group?.count ?? callCount(context.toolCallId);
+        const countText = `+ ${count} tool ${count === 1 ? "call" : "calls"}`
+          + codemodeStatus(group?.callIds ?? new Set([context.toolCallId]));
         if (group?.narrative) {
           return clickable(renderNarrative(group.narrative, group.narrativeType, countText, theme));
         }
@@ -493,7 +522,7 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
 
       const additionalCount = group ? group.count - 1 : 0;
       let text = options.formatCall?.(args as Record<string, unknown>, theme) ??
-        theme.fg("toolTitle", tool.name);
+        theme.fg("toolTitle", name);
       if (additionalCount > 0) {
         const [singular, plural] = options.nouns ?? ["call", "calls"];
         const noun = additionalCount === 1 ? singular : plural;
@@ -520,7 +549,7 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
     },
     renderResult(result, _options, theme, context) {
       const args = (context.args ?? {}) as Record<string, unknown>;
-      if (isSkillRead(tool.name, args)) {
+      if (isSkillRead(name, args)) {
         const path = args.path as string;
         const name = skillReadName(path, skillReadText(result));
         const group = skillReadGroups.get(context.toolCallId);
@@ -537,6 +566,14 @@ export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
       return new Container();
     },
   };
+}
+
+export function withMinimalToolOutput<TParams extends TSchema, TDetails>(
+  tool: ToolDefinition<TParams, TDetails>,
+  options: MinimalToolOutputOptions = {},
+): ToolDefinition<TParams, TDetails> {
+  minimalToolOptions.set(tool.name, options);
+  return { ...tool, ...minimalToolRenderers(tool.name, options) };
 }
 
 function registerMinimalTool<TParams extends TSchema, TDetails>(
@@ -563,7 +600,148 @@ function registerMinimalTool<TParams extends TSchema, TDetails>(
   );
 }
 
+function callCount(id: string): number {
+  return Math.max(1, codemodeCalls.get(id)?.length ?? 1);
+}
+
+// Consume codemode's structured progress, never its script or model-facing output.
+function updateCodemodeCalls(id: string, details: unknown, isError?: boolean): void {
+  if (!details || typeof details !== "object" || !("calls" in details) || !Array.isArray(details.calls)) return;
+  if ("minimalCalls" in details && Array.isArray(details.minimalCalls)) {
+    const metadata = details.minimalCalls.filter((item): item is CodemodeCallMetadata =>
+      !!item && typeof item === "object" && typeof item.id === "string"
+      && typeof item.name === "string" && !!item.args && typeof item.args === "object");
+    codemodeMetadata.set(id, new Map(metadata.map((item) => [item.id, item])));
+  }
+  const calls = details.calls.filter((call): call is CodemodeCall =>
+    !!call && typeof call === "object" && typeof call.id === "string"
+    && typeof call.name === "string" && typeof call.args === "string"
+    && ["running", "ok", "error", "cancelled"].includes(call.status));
+  const errorChanged = isError !== undefined && codemodeScriptErrors.has(id) !== isError;
+  if (isError === true) codemodeScriptErrors.add(id);
+  if (isError === false) codemodeScriptErrors.delete(id);
+  if (!errorChanged && JSON.stringify(codemodeCalls.get(id)) === JSON.stringify(calls)) return;
+  codemodeCalls.set(id, calls);
+  const group = ultraCollapsedGroups.get(id);
+  if (group) {
+    group.count = [...group.callIds].reduce((total, callId) => total + callCount(callId), 0);
+    for (const callId of group.callIds) {
+      if (callId !== id) renderInvalidators.get(callId)?.();
+    }
+  }
+}
+
+function codemodeStatus(ids: Set<string>): string {
+  const calls = [...ids].flatMap((id) => codemodeCalls.get(id) ?? []);
+  const scriptErrors = [...ids].filter((id) => codemodeScriptErrors.has(id)).length;
+  const scriptStatus = scriptErrors === 1 ? " · script failed"
+    : scriptErrors > 1 ? ` · ${scriptErrors} scripts failed` : "";
+  return (["running", "error", "cancelled"] as const).flatMap((status) => {
+    const count = calls.filter((call) => call.status === status).length;
+    return count ? [` · ${count} ${status === "error" ? "failed" : status}`] : [];
+  }).join("") + scriptStatus;
+}
+
+// Older sessions may have only a truncated JSON preview. Omitted arguments stay omitted.
+function codemodeArguments(parentId: string, call: CodemodeCall): Record<string, unknown> {
+  const metadata = codemodeMetadata.get(parentId)?.get(call.id);
+  if (metadata) return metadata.args;
+  try {
+    const args: unknown = JSON.parse(call.args);
+    return args && typeof args === "object" && !Array.isArray(args)
+      ? args as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+// Persist only arguments used by compact cards, never write content or delegated prompts.
+function compactCodemodeArguments(input: Record<string, unknown>): Record<string, unknown> {
+  const keys = ["path", "pattern", "command", "glob", "id", "ids", "name", "harness", "model", "reasoning_effort"];
+  return Object.fromEntries(keys.filter((key) => key in input).map((key) => [
+    key, key === "command" ? firstLineArg(input, key, "...") : input[key],
+  ]));
+}
+
+// Draw nested calls inside their parent's group without adding synthetic transcript entries.
+function minimalCodemodeRenderers(): ToolRenderers {
+  minimalToolOptions.set("codemode", {});
+  const minimal = minimalToolRenderers("codemode");
+  return {
+    renderShell: "self",
+    renderCall(args, theme, context) {
+      let child: Component = new Container();
+      return {
+        render(width) {
+          const header = minimal.renderCall!(args, theme, context);
+          const group = ultraCollapsedGroups.get(context.toolCallId);
+          const expanded = group?.expanded ?? context.expanded;
+          const calls = codemodeCalls.get(context.toolCallId) ?? [];
+          const container = new Container();
+          if (!expanded && calls.length === 0 && (!group || group.callIds.size === 1)) {
+            const label = "codemode" + codemodeStatus(new Set([context.toolCallId]));
+            container.addChild(group?.narrative
+              ? renderNarrative(group.narrative, group.narrativeType, label, theme)
+              : new OneLine(theme.fg(context.isError ? "error" : "toolTitle", label)));
+          } else if (!expanded || calls.length === 0) container.addChild(header);
+          else if (group?.firstId === context.toolCallId && group.narrative) {
+            container.addChild(renderNarrative(group.narrative, group.narrativeType, undefined, theme));
+          }
+          if (expanded && calls.length > 0 && codemodeScriptErrors.has(context.toolCallId)) {
+            container.addChild(new OneLine(theme.fg("error", "codemode · script failed")));
+          }
+          let skillNames: string[] = [];
+          const flushSkills = () => {
+            if (skillNames.length) container.addChild(renderSkillNames(skillNames.join(", "), theme));
+            skillNames = [];
+          };
+          for (const call of calls) {
+            const input = codemodeArguments(context.toolCallId, call);
+            const options = minimalToolOptions.get(call.name) ?? {};
+            if (isSkillRead(call.name, input)) {
+              skillNames.push(codemodeMetadata.get(context.toolCallId)?.get(call.id)?.skillName
+                ?? skillNameFromPath(input.path as string));
+              continue;
+            }
+            flushSkills();
+            if (!expanded && !options.alwaysShowCall) continue;
+            const renderer = minimalToolRenderers(call.name, {
+              ...options,
+              formatCall(input, theme) {
+                const text = Object.keys(input).length && options.formatCall
+                  ? options.formatCall(input, theme) : theme.fg("toolTitle", call.name);
+                const status = call.status === "error" ? theme.fg("error", "✗ ")
+                  : call.status === "running" ? theme.fg("warning", "… ")
+                    : call.status === "cancelled" ? theme.fg("muted", "⊘ ") : "";
+                return status + text;
+              },
+            });
+            container.addChild(renderer.renderCall!(input, theme, {
+              ...context, args: input, toolCallId: call.id, expanded: true,
+              isPartial: call.status === "running", isError: call.status === "error",
+            }));
+          }
+          flushSkills();
+          child = group ? new ToolGroupToggle(container, group, expanded) : container;
+          return child.render(width);
+        },
+        invalidate() { child.invalidate(); },
+        handleMouse(event) { return child.handleMouse?.(event); },
+      };
+    },
+    renderResult(result, _options, _theme, context) {
+      updateCodemodeCalls(context.toolCallId, result.details, context.isError);
+      return new Container();
+    },
+  };
+}
+
 export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
+  codemodeCalls.clear();
+  codemodeMetadata.clear();
+  codemodeScriptErrors.clear();
+  const codemode = minimalCodemodeRenderers();
+  pi.registerToolRenderer((name, next) => name === "codemode" ? codemode : next());
   collapsedGroups.clear();
   ultraCollapsedGroups.clear();
   skillReadGroups.clear();
@@ -582,6 +760,40 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
     return markdown;
   });
 
+  pi.on("tool_execution_update", (event) => {
+    if (event.toolName === "codemode") updateCodemodeCalls(event.toolCallId, event.partialResult.details);
+  });
+
+  pi.on("tool_call", (event) => {
+    const parentId = event.parentToolCallId;
+    if (!parentId || !codemodeCalls.has(parentId)) return;
+    const metadata = codemodeMetadata.get(parentId) ?? new Map<string, CodemodeCallMetadata>();
+    metadata.set(event.toolCallId, {
+      id: event.toolCallId, name: event.toolName, args: compactCodemodeArguments(event.input),
+    });
+    codemodeMetadata.set(parentId, metadata);
+  });
+
+  pi.on("tool_result", (event) => {
+    const metadata = event.parentToolCallId
+      ? codemodeMetadata.get(event.parentToolCallId)?.get(event.toolCallId) : undefined;
+    if (metadata) {
+      if (isSkillRead(event.toolName, event.input)) {
+        metadata.skillName = skillReadName(event.input.path as string, skillReadText(event));
+      }
+      if (event.details && typeof event.details === "object" && "subagentModel" in event.details
+        && typeof event.details.subagentModel === "string") {
+        metadata.args.model = event.details.subagentModel;
+      }
+    }
+    if (event.toolName === "codemode") {
+      const minimalCalls = [...(codemodeMetadata.get(event.toolCallId)?.values() ?? [])];
+      if (minimalCalls.length && event.details && typeof event.details === "object") {
+        return { details: { ...event.details, minimalCalls } };
+      }
+    }
+  });
+
   pi.on("message_start", (event) => {
     if (event.message.role === "user") sharedState.activeUltraCollapsedGroup = undefined;
   });
@@ -595,6 +807,9 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", (_event, ctx) => {
+    codemodeCalls.clear();
+    codemodeMetadata.clear();
+    codemodeScriptErrors.clear();
     collapsedGroups.clear();
     ultraCollapsedGroups.clear();
     skillReadGroups.clear();
@@ -608,6 +823,8 @@ export default function minimalToolOutputExtension(pi: ExtensionAPI): void {
         sharedState.activeUltraCollapsedGroup = undefined;
       } else if (entry.message.role === "assistant") {
         indexToolGroups(entry.message.content);
+      } else if (entry.message.role === "toolResult" && entry.message.toolName === "codemode") {
+        updateCodemodeCalls(entry.message.toolCallId, entry.message.details, entry.message.isError);
       }
     }
   });
