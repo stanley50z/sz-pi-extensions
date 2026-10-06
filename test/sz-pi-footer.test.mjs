@@ -4,6 +4,7 @@ import childProcess, { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { visibleWidth } from '@earendil-works/pi-tui';
@@ -729,6 +730,37 @@ test('long cwd and branch push the session name right instead of forcing it to c
   } finally {
     process.chdir(originalCwd);
   }
+});
+
+test('an idle footer repaints clean totals after a commit by another process', async (t) => {
+  const repo = await createCleanRepo();
+  const { default: installFooterExtension } = await freshFooterModule();
+  const { default: installGitViewExtension } = await import('../extensions/sz-git-view/index.ts');
+  const pi = createFakePi();
+  const gitHandlers = new Map();
+  const gitPi = { ...pi, on: (event, handler) => gitHandlers.set(event, handler) };
+  const ctx = createFakeContext({ cwd: repo });
+  ctx.mode = 'tui';
+  installFooterExtension(pi);
+  installGitViewExtension(gitPi);
+  t.after(async () => {
+    await gitHandlers.get('session_shutdown')({}, ctx);
+    await pi.handlers.get('session_shutdown')({}, ctx);
+    await rm(repo, { recursive: true, force: true });
+  });
+  await writeFile(join(repo, 'file.txt'), 'after\n', 'utf8');
+  await gitHandlers.get('session_start')({}, ctx);
+  await pi.handlers.get('session_start')({}, ctx);
+  let renders = 0;
+  const footer = ctx.footerFactory({ requestRender() { renders++; } }, plainTheme, footerData);
+  assert.match(footer.render(120)[1], /\+1\s+−1/);
+
+  git(['add', 'file.txt'], repo);
+  git(['commit', '-m', 'external commit'], repo);
+  const deadline = Date.now() + 4000;
+  while (!renders && Date.now() < deadline) await delay(50);
+  assert.ok(renders > 0, 'the idle TUI must receive a render request');
+  assert.match(footer.render(120)[1], /\+0\s+−0/);
 });
 
 test('footer shows Git diff totals supplied by the TUI viewer', async () => {

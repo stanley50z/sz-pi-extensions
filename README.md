@@ -103,7 +103,9 @@ Tool-group click validation logs and failure stack traces are saved in `~/.pi/ag
 
 Click the underlined cwd path in the footer in fullscreen mode to open the session folder in Explorer, Finder, or the Linux file manager. Shortened paths still open the full directory; the branch and session name are not clickable.
 
-The Git Diff Viewer activates when the session working directory belongs to a Git repository. Click the underlined, centered `+X −Y` footer totals in fullscreen mode to show or hide up to five files, ordered by total lines changed. The viewer runs entirely in Pi's TUI and does not start a localhost server.
+The Git Diff Viewer activates when the session working directory belongs to a Git repository. Click the underlined, centered `+X −Y` footer totals in fullscreen mode to show or hide up to five files, ordered by total lines changed. The viewer runs entirely in Pi's TUI and does not start a localhost server. Idle TUI sessions check Git every second, so commits and file changes from another session or editor update the footer without a new turn. Git reads run asynchronously, scans do not overlap, and unchanged totals do not trigger a repaint. Polling stops on shutdown or reload.
+
+Validate with `node --test test/sz-git-view.test.mjs test/sz-pi-footer.test.mjs`. Validation output and assertion failure stack traces are saved under `~/.pi/agent/logs/git-footer-validation/` when the command output is captured there. `red.txt` records the original stale-footer reproduction; `green.txt` records the focused suite, and `full.txt` records the full suite.
 
 When a GitHub Copilot model is selected, the centered subscription slot shows monthly consumption, for example `Copilot month:$43.93`. The session's calculated cost stays on the left, and Codex usage is unchanged. Copilot consumption is `quota_snapshots.premium_interactions.credits_used / 100` in USD, including included consumption and overage already. It is not an amount due. Valid zero displays `$0.00`; loading displays `…`; missing credentials, unsupported API-key or enterprise auth, invalid data, and failed requests display `unavailable`.
 

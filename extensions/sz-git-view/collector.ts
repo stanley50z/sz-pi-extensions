@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 export interface GitDiffFile {
   path: string;
@@ -15,18 +16,20 @@ export interface GitDiffSummary {
 }
 
 const GIT_TIMEOUT = 3000;
+const execGit = promisify(execFile);
 
-function runGit(args: string[], cwd: string): string {
-  return execFileSync("git", ["-C", cwd, ...args], {
+async function runGit(args: string[], cwd: string): Promise<string> {
+  const { stdout } = await execGit("git", ["-C", cwd, ...args], {
     encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
     timeout: GIT_TIMEOUT,
     maxBuffer: 1024 * 1024,
+    windowsHide: true,
   });
+  return stdout;
 }
 
-function countTextLines(path: string): number {
-  const content = readFileSync(path);
+async function countTextLines(path: string): Promise<number> {
+  const content = await readFile(path);
   if (content.includes(0) || content.length === 0) return 0;
 
   let lines = content.at(-1) === 10 ? 0 : 1;
@@ -36,14 +39,15 @@ function countTextLines(path: string): number {
   return lines;
 }
 
-export function collectDiffSummary(cwd: string): GitDiffSummary | null {
+// Collect footer totals without blocking terminal input during background refreshes.
+export async function collectDiffSummary(cwd: string): Promise<GitDiffSummary | null> {
   try {
-    const repoRoot = runGit(["rev-parse", "--show-toplevel"], cwd).trim();
+    const repoRoot = (await runGit(["rev-parse", "--show-toplevel"], cwd)).trim();
     let output: string;
     try {
-      output = runGit(["diff", "--numstat", "HEAD", "--"], repoRoot);
+      output = await runGit(["diff", "--numstat", "HEAD", "--"], repoRoot);
     } catch {
-      output = runGit(["diff", "--numstat", "--cached", "--"], repoRoot);
+      output = await runGit(["diff", "--numstat", "--cached", "--"], repoRoot);
     }
     const files = output.trim()
       ? output.trimEnd().split("\n").map((line) => {
@@ -55,11 +59,12 @@ export function collectDiffSummary(cwd: string): GitDiffSummary | null {
           };
         })
       : [];
-    const untracked = runGit(["ls-files", "--others", "--exclude-standard", "-z"], repoRoot)
+    const untracked = (await runGit(["ls-files", "--others", "--exclude-standard", "-z"], repoRoot))
       .split("\0")
-      .filter(Boolean)
-      .map((path) => ({ path, added: countTextLines(join(repoRoot, path)), deleted: 0 }));
-    files.push(...untracked);
+      .filter(Boolean);
+    for (const path of untracked) {
+      files.push({ path, added: await countTextLines(join(repoRoot, path)), deleted: 0 });
+    }
 
     return {
       added: files.reduce((total, file) => total + file.added, 0),
