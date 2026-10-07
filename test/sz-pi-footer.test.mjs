@@ -8,6 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { visibleWidth } from '@earendil-works/pi-tui';
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { connectRunningSubagentStatus } from '../lib/subagent-tool-output.ts';
 
 const moduleUrl = new URL('../extensions/sz-pi-footer.ts', import.meta.url).href;
@@ -424,6 +426,81 @@ test('footer centers five-hour and weekly ChatGPT subscription usage', async () 
   } finally {
     process.chdir(originalCwd);
   }
+});
+
+test('footer prices resumed Claude Bridge tokens at API rates without changing saved usage', async (t) => {
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false,
+  });
+  const usage = {
+    input: 1000, output: 2000, cacheRead: 3000000, cacheWrite: 4000, totalTokens: 3007000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  const branch = [{ type: 'message', message: {
+    role: 'assistant', provider: 'claude-bridge', model: 'claude-opus-5-5', usage,
+  } }];
+  const ctx = createFakeContext({
+    model: { provider: 'claude-bridge', id: 'claude-opus-5-5' }, branch,
+  });
+  ctx.modelRegistry = new ModelRegistry(runtime);
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  createFooterExtension({ readClaudeRateLimits: async () => null })(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  const before = structuredClone(branch);
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  // Opus 5.5 catalog rates per million: $4 input, $20 output, $0.20 read, $5 write.
+  assert.match(footer.render(160)[1], /\$0\.664\s/);
+  assert.deepEqual(branch, before, 'rendering must not mutate persisted message usage');
+});
+
+test('footer keeps per-model Bridge pricing and other providers costs after switching models', async (t) => {
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false,
+  });
+  const entries = ['claude-opus-5-5', 'claude-fable-5-1'].map(model => ({
+    type: 'message', message: { role: 'assistant', provider: 'claude-bridge', model,
+      usage: { input: 1000, output: 2000, cacheRead: 3000000, cacheWrite: 4000,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    },
+  }));
+  entries.push({ type: 'message', message: { role: 'assistant', provider: 'openai', model: 'test-model',
+    usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.123 } },
+  } });
+  const ctx = createFakeContext(); // The selected model is not Claude Bridge.
+  ctx.modelRegistry = new ModelRegistry(runtime);
+  ctx.sessionManager.getEntries = () => entries;
+  // Totals must include entries outside the active branch, just like the existing footer.
+  ctx.sessionManager.getBranch = () => [entries[2]];
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  createFooterExtension({ readClaudeRateLimits: async () => null })(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  // Opus $0.664 + Fable $0.910 + the other provider's reported $0.123 = $1.697.
+  assert.match(footer.render(160)[1], /\$1\.70\s/);
+  assert.match(footer.render(160)[1], /R6\.0M/);
+});
+
+test('footer reports unavailable cost rather than zero or a partial sum for an unknown Bridge model', async (t) => {
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false,
+  });
+  const ctx = createFakeContext({ branch: [{ type: 'message', message: {
+    role: 'assistant', provider: 'claude-bridge', model: 'claude-unknown',
+    usage: { input: 1000, output: 2000, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+  } }] });
+  ctx.modelRegistry = new ModelRegistry(runtime);
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  createFooterExtension({ readClaudeRateLimits: async () => null })(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  const line = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData).render(160)[1];
+  assert.match(line, /cost:unavailable/);
+  assert.doesNotMatch(line, /\$/);
 });
 
 async function renderClaudeBridgeFooter(readPlanUsage) {

@@ -11,7 +11,7 @@
 
 import childProcess from "node:child_process";
 import { resolve } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { calculateCost, type AssistantMessage } from "@earendil-works/pi-ai";
 import {
   estimateTokens,
   type ExtensionAPI,
@@ -518,6 +518,7 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
             cacheRead = 0,
             cacheWrite = 0,
             cost = 0;
+          let costAvailable = true;
           const entries = typeof ctx.sessionManager.getEntries === "function"
             ? ctx.sessionManager.getEntries()
             : ctx.sessionManager.getBranch();
@@ -528,7 +529,18 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
               output += m.usage.output;
               cacheRead += m.usage.cacheRead || 0;
               cacheWrite += m.usage.cacheWrite || 0;
-              cost += m.usage.cost.total;
+              if (m.provider === "claude-bridge") {
+                // Bridge prices are zero. Reprice each message with its own Anthropic
+                // catalog model, including resumed history, without mutating saved usage.
+                const pricedModel = ctx.modelRegistry.find("anthropic", m.model);
+                if (pricedModel) {
+                  cost += calculateCost(pricedModel, { ...m.usage, cost: { ...m.usage.cost } }).total;
+                } else {
+                  costAvailable = false;
+                }
+              } else {
+                cost += m.usage.cost.total;
+              }
             }
           }
 
@@ -540,7 +552,7 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
           if (cacheWrite) statsParts.push(`W${formatTokens(cacheWrite)}`);
 
           const usingSubscription = ctx.model ? ctx.modelRegistry?.isUsingOAuth?.(ctx.model) : false;
-          statsParts.push(`$${formatCost(cost)}`);
+          statsParts.push(costAvailable ? `$${formatCost(cost)}` : "cost:unavailable");
 
           const contextPercent = ctx.getContextUsage?.()?.percent;
           if (contextPercent !== null && contextPercent !== undefined) {

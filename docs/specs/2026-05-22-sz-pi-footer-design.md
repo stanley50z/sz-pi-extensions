@@ -16,6 +16,7 @@
 - Show extension statuses on the right side of the stats line: requested through the fast-mode/status integration work.
 - Show both five-hour and weekly ChatGPT subscription usage in the center of the second line: requested after restoring subscription visibility; unavailable windows remain visible with an em dash.
 - Keep the calculated API-equivalent cost at three significant figures, remove the redundant `(sub)` suffix, and show `API` in the center when API-key billing is active instead of subscription usage.
+- Show API-equivalent cost for Claude Bridge sessions rather than the bridge's zero-priced usage. This is the token value at API rates, not subscription or Extra Usage charges.
 - Compact the bottom-right OpenAI identity to `(OpenAI) 5.6 Sol @high ⚡fast` instead of raw provider/model IDs, parenthesized reasoning, and a spaced fast-mode label.
 
 ## Agent Design Decisions
@@ -32,6 +33,7 @@
 - Add no trailing spaces after the right-aligned speed or model/status text: the final visible character aligns with the editor divider's right edge.
 - Compute totals from `getEntries()` when available, otherwise `getBranch()`: serves default-like cumulative usage totals across the session while preserving compatibility.
 - Include input, output, cache read, cache write, calculated cost, and context usage in compact token units: serves default-style footer parity.
+- Reprice each Claude Bridge assistant message using its own model's current Anthropic catalog entry from `ctx.modelRegistry.find()` and Pi's `calculateCost()`. Include cached tokens, recalculate resumed history, and clone usage before calculating so rendering never mutates session entries. Keep other providers' reported costs. Show `cost:unavailable` for the whole total if any Bridge model is absent from the catalog rather than displaying a partial sum.
 - Format calculated cost to three significant figures for both subscription and API-key sessions; subscription usage in the center already identifies subscription authentication, so omit `(sub)` from the cost.
 - Display context as `ctx:<percent>%`, rounded to an integer: serves compact context visibility without exposing the model's maximum context window or auto-compaction label.
 - Display provider prefix only when multiple providers are available; map `openai-codex` to `OpenAI`: serves model clarity without wasting width or exposing an implementation-facing provider ID.

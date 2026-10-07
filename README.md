@@ -113,6 +113,10 @@ The footer reads Pi's existing GitHub Copilot OAuth `refresh` credential from th
 
 When a `claude-bridge` model is selected, the same slot shows the Claude plan's five-hour and weekly usage in the Codex format, for example `5h:12% wk:34%`. The footer starts a short-lived Claude Code process through the bundled Claude Agent SDK and sends the request behind `/usage`, without starting a turn or saving a session. Session start, model selection, and turn completion trigger a read, which times out after 10 seconds. `…` means loading, `!` means the read failed, and `—` means Claude Code reported no value for that window. When Claude Code authenticates with an API key, Bedrock, or Vertex, the slot shows `API`. The SDK marks this request experimental, so an SDK update can break it, and the slot then shows `5h:! wk:!`.
 
+Claude Bridge's session cost on the left is the API-equivalent value of its recorded tokens, not your subscription bill or Extra Usage charges. The footer prices each message using its own model's current Anthropic rates from Pi's model registry, including input, output, cache reads, and cache writes. It also reprices resumed zero-cost history without changing saved messages. Other providers keep their reported costs. If a Bridge model is absent from the catalog, the total shows `cost:unavailable` instead of a misleading zero or partial sum. Costs retain three significant figures.
+
+Claude cost validation output and failure stack traces are saved in `~/.pi/agent/logs/claude-cost-validation/`: `red.txt`, `green.txt`, `full.txt`, and `e2e.json`. The real-session check uses a disposable copy and records only usage totals and footer lines. A failed real-session check writes `crash-report.txt` there.
+
 ## Image paste over SSH
 
 To paste Windows screenshots into Pi running on a Mac, start the connection from Windows Terminal with `python scripts\ssh-clipboard\ssh.py my-mac`. Copy a screenshot and press Alt+V in Pi. The helper transfers the image through SSH and adds it to the draft without submitting. Clipboard paste survives reconnects when Pi runs inside Herdr or tmux. Normal text paste is unchanged.
