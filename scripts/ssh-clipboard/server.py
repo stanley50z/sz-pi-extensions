@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import socket
 import threading
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -81,6 +82,9 @@ def create_server(token, capture=read_windows_clipboard, request_timeout=10):
         def do_GET(self):
             if not self.authorized():
                 return
+            if self.path == '/health':
+                self.reply(204, b'')
+                return
             if self.path != '/image':
                 self.reply(404, b'Not found')
                 return
@@ -93,6 +97,7 @@ def create_server(token, capture=read_windows_clipboard, request_timeout=10):
                 self.reply(409, b'No image on the Windows clipboard')
                 return
             except Exception as error:
+                traceback.print_exc()  # The launcher's private log retains capture failure stacks.
                 self.reply(500, str(error).encode('utf-8'))
                 return
             self.reply(200, image, 'image/png')

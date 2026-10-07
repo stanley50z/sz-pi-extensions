@@ -1,5 +1,6 @@
 """Open remote Pi or a Mac shell with clipboard forwarding. Run inside Windows Terminal."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shlex
@@ -29,12 +30,24 @@ def main():
         parser.error('host must be an SSH destination, not an option')
     with tempfile.TemporaryDirectory(prefix='pi-clipboard-') as directory:
         state_path = Path(directory) / 'connection.json'
-        state, helper = start(state_path, parent=os.getpid())
-        socket_path = f'/tmp/pi-clipboard-{uuid4().hex}.sock'
+        connection_id = uuid4().hex
+        agent_dir = Path(os.environ.get('PI_CODING_AGENT_DIR', Path.home() / '.pi' / 'agent')).expanduser()
+        log_path = agent_dir / 'logs' / 'ssh-clipboard' / f'{connection_id}.log'
+        state, helper = start(state_path, parent=os.getpid(), log_path=log_path)
+        socket_path = f'/tmp/pi-clipboard-{connection_id}.sock'
+        record = json.dumps({'socketPath': socket_path, 'token': state['token']})
+        # Publish atomically outside Herdr's inherited environment; only this connection owns its record.
         script = (
             f'export PI_SSH_CLIPBOARD_SOCKET={shlex.quote(socket_path)}; '
             f'export PI_SSH_CLIPBOARD_TOKEN={shlex.quote(state["token"])}; '
-            'trap \'rm -f -- "$PI_SSH_CLIPBOARD_SOCKET"\' EXIT; '
+            'umask 077; '
+            'connections_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/ssh-clipboard/connections"; '
+            'mkdir -p -- "$connections_dir" || exit; '
+            'chmod 700 "$connections_dir" || exit; '
+            f'connection_file="$connections_dir/{connection_id}.json"; '
+            'trap \'rm -f -- "$connection_file" "$connection_file.tmp" "$PI_SSH_CLIPBOARD_SOCKET"\' EXIT; '
+            f'print -r -- {shlex.quote(record)} > "$connection_file.tmp" || exit; '
+            'mv -f -- "$connection_file.tmp" "$connection_file" || exit; '
         )
         if args.cwd:
             script += f'cd -- {shlex.quote(args.cwd)} || exit; '

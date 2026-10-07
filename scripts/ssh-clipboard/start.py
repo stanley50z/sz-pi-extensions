@@ -10,7 +10,7 @@ import time
 
 
 # Each caller owns a separate state file, token, and ephemeral loopback port.
-def start(state_path, parent=None):
+def start(state_path, parent=None, log_path=None):
     state_path = Path(state_path).resolve()
     state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with os.fdopen(os.open(state_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w', encoding='utf-8') as file:
@@ -18,8 +18,9 @@ def start(state_path, parent=None):
     command = [sys.executable, '-B', str(Path(__file__).with_name('server.py')), '--state', str(state_path)]
     if parent is not None:
         command += ['--parent', str(parent)]
-    log_path = state_path.with_suffix('.log')
-    with log_path.open('wb') as log:
+    log_path = Path(log_path) if log_path is not None else state_path.with_suffix('.log')
+    log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with os.fdopen(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb') as log:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
                                    start_new_session=os.name != 'nt')

@@ -14,6 +14,53 @@ PNG = bytes.fromhex('89504e470d0a1a0a') + b'clipboard fixture'
 
 
 class ClipboardServerTest(unittest.TestCase):
+    def test_capture_errors_write_a_traceback_without_logging_credentials(self):
+        import contextlib
+        import io
+        def capture():
+            raise RuntimeError('capture unavailable')
+        server = server_module.create_server('a' * 64, capture)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            request = urllib.request.Request(f'http://127.0.0.1:{server.server_port}/image',
+                                             headers={'Authorization': 'Bearer ' + 'a' * 64})
+            log = io.StringIO()
+            with contextlib.redirect_stderr(log), self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=2)
+            self.assertEqual(error.exception.code, 500)
+            error.exception.close()
+            self.assertIn('Traceback', log.getvalue())
+            self.assertIn('RuntimeError: capture unavailable', log.getvalue())
+            self.assertNotIn('a' * 64, log.getvalue())
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
+    def test_authenticated_health_check_never_reads_clipboard(self):
+        reads = []
+        server = server_module.create_server('a' * 64, lambda: reads.append(True))
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            url = f'http://127.0.0.1:{server.server_port}/health'
+            for token in (None, 'b' * 64):
+                headers = {} if token is None else {'Authorization': 'Bearer ' + token}
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=2)
+                self.assertEqual(error.exception.code, 403)
+                error.exception.close()
+            request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + 'a' * 64})
+            with urllib.request.urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 204)
+                self.assertEqual(response.read(), b'')
+            self.assertEqual(reads, [])
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
     def test_authenticated_image_request_reads_clipboard_on_demand(self):
         reads = []
         def capture():
@@ -121,6 +168,48 @@ class ShellAliasTest(unittest.TestCase):
 
 
 class HelperLifecycleTest(unittest.TestCase):
+    @unittest.skipUnless(__import__('sys').platform == 'darwin', 'Requires the Mac login shell')
+    def test_launcher_publishes_private_remote_connection_record_and_removes_only_its_own(self):
+        import json
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pathlib.Path(directory)
+            agent_dir = folder / 'agent dir'
+            connections = agent_dir / 'ssh-clipboard' / 'connections'
+            connections.mkdir(parents=True, mode=0o700)
+            unrelated = connections / ('f' * 32 + '.json')
+            unrelated.write_text('{"unrelated":true}', encoding='utf-8')
+            fake_ssh = folder / 'ssh'
+            fake_ssh.write_text('#!' + sys.executable + '\nimport subprocess,sys\nsys.exit(subprocess.call(sys.argv[-1], shell=True))\n', encoding='utf-8')
+            fake_ssh.chmod(0o700)
+            probe = folder / 'probe.py'
+            probe.write_text(
+                'import json,os,pathlib,stat\n'
+                'folder=pathlib.Path(os.environ["PI_CODING_AGENT_DIR"])/"ssh-clipboard"/"connections"\n'
+                'files=[p for p in folder.glob("*.json") if p.name != "' + unrelated.name + '"]\n'
+                'assert len(files)==1, "Launcher did not publish its connection record"\n'
+                'record=json.loads(files[0].read_text())\n'
+                'assert record["socketPath"]==os.environ["PI_SSH_CLIPBOARD_SOCKET"]\n'
+                'assert record["token"]==os.environ["PI_SSH_CLIPBOARD_TOKEN"]\n'
+                'assert stat.S_IMODE(files[0].stat().st_mode)==0o600\n'
+                'assert stat.S_IMODE(folder.stat().st_mode)==0o700\n'
+                'print("private connection published")\nraise SystemExit(7)\n', encoding='utf-8')
+            env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                   'ZDOTDIR': directory, 'PI_CODING_AGENT_DIR': str(agent_dir)}
+            run = subprocess.run([sys.executable, '-B', str(ROOT / 'ssh.py'), '--pi', sys.executable,
+                                  'my-mac', '--', str(probe)], env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(run.returncode, 7, run.stderr)
+            self.assertIn('private connection published', run.stdout)
+            self.assertEqual(list(connections.iterdir()), [unrelated])
+            self.assertEqual(unrelated.read_text(encoding='utf-8'), '{"unrelated":true}')
+            logs = list((agent_dir / 'logs' / 'ssh-clipboard').glob('*.log'))
+            self.assertEqual(len(logs), 1, 'Helper log must survive removal of its temporary connection state')
+            import stat
+            self.assertEqual(stat.S_IMODE(logs[0].stat().st_mode), 0o600)
+
     @unittest.skipUnless(__import__('sys').platform == 'darwin', 'Requires the Mac login shell')
     def test_shell_mode_inherits_clipboard_connection_and_preserves_exit_status(self):
         import json

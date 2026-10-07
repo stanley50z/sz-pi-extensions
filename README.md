@@ -115,7 +115,7 @@ When a `claude-bridge` model is selected, the same slot shows the Claude plan's 
 
 ## Image paste over SSH
 
-To paste Windows screenshots into Pi running on a Mac, start the connection from Windows Terminal with `python scripts\ssh-clipboard\ssh.py my-mac`. Copy a screenshot and press Alt+V in Pi. The helper transfers the image through SSH and adds it to the draft without submitting. Normal text paste is unchanged.
+To paste Windows screenshots into Pi running on a Mac, start the connection from Windows Terminal with `python scripts\ssh-clipboard\ssh.py my-mac`. Copy a screenshot and press Alt+V in Pi. The helper transfers the image through SSH and adds it to the draft without submitting. Clipboard paste survives reconnects when Pi runs inside Herdr or tmux. Normal text paste is unchanged.
 
 See [setup, session resuming, and privacy details](scripts/ssh-clipboard/README.md). This needs the helper on Windows; installing the Mac extension alone cannot read the Windows clipboard.
 

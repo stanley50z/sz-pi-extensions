@@ -37,7 +37,7 @@ To open a Mac login shell with clipboard forwarding ready, instead of launching 
 python "$HOME\sz-pi-extensions\scripts\ssh-clipboard\ssh.py" --shell mac
 ```
 
-You can then change directories and run `pi` or `pi --continue`. Pi inherits the clipboard connection from that shell. `--shell` cannot be combined with `--pi` or Pi arguments after `--`.
+You can then change directories and run `pi` or `pi --continue`, directly or inside Herdr. Pi discovers the live clipboard connection independently of the pane's inherited environment. `--shell` cannot be combined with `--pi` or Pi arguments after `--`.
 
 For the short command, add this line to your PowerShell profile:
 
@@ -47,6 +47,20 @@ For the short command, add this line to your PowerShell profile:
 
 Open a new PowerShell tab and run `ssh mac`. The profile defines a shell function, not an SSH config alias. It intercepts only bare `ssh mac`; other hosts and commands with extra arguments, such as `ssh mac uptime` or `ssh -N mac`, still use ordinary SSH. Use `ssh.exe mac` to bypass the function. The helper stops when you exit the Mac shell. No always-running service or SSH configuration change is needed.
 
+### Pi inside Herdr
+
+Keep your usual workflow:
+
+1. On Windows, run `ssh mac` with the profile function above.
+2. On the Mac, run `herdr` and launch `pi` in a pane.
+3. Copy a Windows screenshot and press Alt+V in Pi's main prompt.
+
+You can disconnect and reconnect through `ssh mac` without restarting Herdr or Pi. Each paste discovers the current authenticated connection instead of reusing the persistent server's old socket and token. This also works in tmux.
+
+When upgrading from the environment-only bridge, reconnect once with the updated Windows launcher, then run `/reload` in each existing Pi process to load the updated Mac extension. Do not stop the Herdr server. Pi processes started before any clipboard connection was published also need one `/reload` to enable discovery.
+
+If several clipboard-enabled SSH connections to the same Mac account are active, Pi reports ambiguity without reading any clipboard. Close the extra connections, leaving the one whose Windows clipboard you want to use. A plain `ssh.exe` connection does not create another clipboard bridge.
+
 ### Paste a screenshot
 
 1. Take a screenshot with Win+Shift+S and copy it.
@@ -54,19 +68,25 @@ Open a new PowerShell tab and run `ssh mac`. The profile defines a shell functio
 3. Wait for the `@"...png"` reference to appear. You can add text or paste another image.
 4. Press Enter. Pi receives PNG image content, not Windows-only file paths.
 
-An existing plain `ssh` connection opened without the wrapper has no forwarding configuration. Reconnect through this launcher and resume the session. A Pi process left in tmux keeps its original connection credentials; after reconnecting, restart Pi with `--continue` from the new launcher rather than reattaching that stale process.
+An existing plain `ssh` connection opened without the wrapper has no forwarding configuration. Connect through this launcher. A disconnected or expired bridge produces a visible error without changing the draft.
 
 ## Privacy and lifecycle
 
-The helper reads the clipboard only when requested, not when it changes. It sends images, never clipboard text. Each connection has a random authentication token and its own remote socket. The Windows listener binds only to `127.0.0.1` on an OS-assigned port. No fixed port or Windows inbound firewall rule is needed.
+The helper reads the clipboard only when you paste, not when it changes. Authenticated `/health` requests check connection reachability without capturing an image. The helper sends images, never clipboard text. Each connection has a random authentication token and its own remote socket. The Windows listener binds only to `127.0.0.1` on an OS-assigned port. No fixed port or Windows inbound firewall rule is needed.
+
+The launcher atomically publishes that socket and token in `~/.pi/agent/ssh-clipboard/connections/<connection-id>.json` on the Mac, or under `PI_CODING_AGENT_DIR` when configured in the launching shell. The records have mode 0600 and the connections directory has mode 0700. Keep these files private; do not include them in bug reports. Pi checks ownership and permissions before reading them, then requires exactly one live authenticated connection. Inherited environment credentials never override discovery.
 
 Only use this with a trusted Mac account. That account and its processes have the token and can request clipboard images for the lifetime of the connection. The token is not an approval boundary against code running as you on either machine.
 
-The launcher stops the helper when SSH exits, including connection failures. The helper also checks whether its launcher has exited. The remote shell removes its socket on exit; an ungraceful host shutdown can leave an inert `/tmp/pi-clipboard-*.sock` file. Each new connection uses a different name.
+The launcher stops the helper when SSH exits, including connection failures. The helper also checks whether its launcher has exited. The remote shell removes only its own record and socket on exit. An ungraceful shutdown can leave an inert record or `/tmp/pi-clipboard-*.sock` file; discovery ignores unreachable connections. Each new connection uses a different name.
 
 The Mac stores screenshots under `~/.pi/agent/ssh-images/`, or `ssh-images/` in `PI_CODING_AGENT_DIR`, using private directory and file permissions. Files persist so drafts, reloads, and prompt history can reuse them. They are not automatically deleted; remove unneeded files after their drafts are sent or discarded. Submitted images also persist in Pi session history.
 
 Transfers time out after ten seconds and reject PNGs above 20 MiB. Windows capture also rejects images above 40 megapixels. Empty clipboards and transfer failures show an error without changing the draft. Submitting before a transfer completes cancels the paste with a warning.
+
+## Diagnostic logs
+
+Launcher-managed helpers persist errors and uncaught crash tracebacks on Windows at `~/.pi/agent/logs/ssh-clipboard/<connection-id>.log`. These logs survive connection cleanup. Pi persists paste and attachment failure stacks on the Mac at `~/.pi/agent/logs/ssh-clipboard.log`. Both use the corresponding machine's `PI_CODING_AGENT_DIR` when set. Logs exclude clipboard contents and authentication tokens. No native crash dump is required; failures are recorded as stack traces.
 
 ## Standalone helper controls
 
@@ -86,5 +106,9 @@ Keep the state file private. It contains the shutdown token. The adjacent `.log`
 The implementation was exercised through a real Pi pseudo-terminal and an isolated OpenSSH server on macOS: type a draft, send Alt+V, transfer a 303,200-byte PNG through Unix-socket forwarding, verify no submission, then press Enter and verify the attached bytes. That run used a macOS system icon converted to PNG.
 
 Windows validation also captured a real 3370×1702 screenshot and transferred its 147,585 PNG bytes to the Mac through SSH with an identical SHA-256 hash. The PowerShell `ssh mac` function was exercised against the real Mac login shell, verifying inherited clipboard configuration, an empty-clipboard response, exit-status propagation, helper shutdown, and socket cleanup. The physical Windows Terminal Alt+V interaction still needs the walkthrough above.
+
+The reconnect fix was exercised with a real Windows clipboard PNG through two launcher-managed SSH connections and one unchanged Pi process inside an isolated Herdr session. Herdr and Pi retained the first connection's environment while the second paste used the replacement connection. Both image hashes matched, the draft was not submitted by paste, Enter attached both images, and Alt+V worked after `/new` completed. Herdr's pane-key API drove the keys; physical Windows Terminal keyboard input remains a manual check.
+
+Regression tests cover reconnect discovery, private atomic publication and cleanup, ambiguity without capture, incorrect tokens, stale and malformed records, FIFO rejection, bounded health checks, cancellation, and persistent error reports. Mac-specific transport tests run on macOS rather than silently relying on Windows skips.
 
 The request-deadline regression keeps trickling header bytes until the server closes the connection, so an idle timeout cannot substitute for the total deadline. It accepts EOF, reset, abort, or broken pipe as platform-specific closure signals. Disabling the total timer makes the test fail.
