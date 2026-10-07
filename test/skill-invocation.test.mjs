@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { clampThinkingLevel, getModel } from '@earendil-works/pi-ai/compat';
 import {
   KeybindingsManager,
   TUI_KEYBINDINGS,
@@ -13,10 +14,10 @@ function createFakePi() {
   return {
     handlers,
     thinkingLevel: 'high',
-    model: { provider: 'openai-codex', id: 'original' },
+    model: { ...getModel('anthropic', 'claude-opus-5-5'), provider: 'claude-bridge' },
     getThinkingLevel() { return this.thinkingLevel; },
-    async setModel(model) { this.model = model; this.thinkingLevel = 'max'; return true; },
-    setThinkingLevel(level) { this.thinkingLevel = level; },
+    async setModel() { throw new Error('Commit must not switch models'); },
+    setThinkingLevel(level) { this.thinkingLevel = clampThinkingLevel(this.model, level); },
     on(event, handler) {
       handlers.set(event, handler);
     },
@@ -43,24 +44,18 @@ function modelContext(pi) {
   return {
     get model() { return pi.model; },
     isIdle: () => true,
-    modelRegistry: {
-      find(provider, id) {
-        assert.equal(provider, 'openai-codex');
-        assert.equal(id, 'gpt-6.1-sol');
-        return { provider, id };
-      },
-    },
+    modelRegistry: { find: (provider, id) => getModel(provider, id) },
     ui: { notify() {} },
   };
 }
 
-test('explicit commit uses subscription GPT 6.1 Sol with low reasoning then restores the previous model and reasoning', async () => {
+test('explicit commit keeps Claude and uses its lowest supported reasoning then restores reasoning', async () => {
   for (const text of ['$commit', 'please $commit now', '/skill:commit', '/skill:commit staged only']) {
     const pi = await install();
     const original = pi.model;
     const ctx = modelContext(pi);
     await pi.handlers.get('input')({ text }, ctx);
-    assert.deepEqual(pi.model, { provider: 'openai-codex', id: 'gpt-6.1-sol' });
+    assert.equal(pi.model, original);
     assert.equal(pi.thinkingLevel, 'low');
     await pi.handlers.get('agent_settled')({}, ctx);
     assert.equal(pi.model, original);
@@ -68,67 +63,81 @@ test('explicit commit uses subscription GPT 6.1 Sol with low reasoning then rest
   }
 });
 
-test('a commit already using Sol temporarily lowers reasoning and restores it afterward', async () => {
-  const pi = await install();
-  pi.model = { provider: 'openai-codex', id: 'gpt-6.1-sol' };
-  const original = pi.model;
-  const ctx = modelContext(pi);
-  await pi.handlers.get('input')({ text: '$commit' }, ctx);
-  assert.equal(pi.thinkingLevel, 'low');
-  await pi.handlers.get('agent_settled')({}, ctx);
-  assert.equal(pi.model, original);
-  assert.equal(pi.thinkingLevel, 'high');
+test('commit uses off or minimal when supported without switching models', async () => {
+  for (const [model, expected] of [
+    [getModel('openai-codex', 'gpt-6.1-sol'), 'minimal'],
+    [{ ...getModel('anthropic', 'claude-opus-5-5'), thinkingLevelMap: { off: 'none' } }, 'off'],
+    [{ ...getModel('anthropic', 'claude-opus-5-5'), reasoning: false }, 'off'],
+  ]) {
+    const pi = await install();
+    pi.model = model;
+    pi.thinkingLevel = model.reasoning ? 'high' : 'off';
+    const originalReasoning = pi.thinkingLevel;
+    const ctx = modelContext(pi);
+    await pi.handlers.get('input')({ text: '$commit' }, ctx);
+    assert.equal(pi.model, model);
+    assert.equal(pi.thinkingLevel, expected);
+    await pi.handlers.get('agent_settled')({}, ctx);
+    assert.equal(pi.model, model);
+    assert.equal(pi.thinkingLevel, originalReasoning);
+  }
 });
 
-test('a commit queued during work does not change the running model', async () => {
+test('a queued commit waits before lowering reasoning and preserves attachments', async () => {
   const pi = await install();
   const ctx = modelContext(pi);
   const original = pi.model;
   const sent = [];
+  const image = { type: 'image', data: 'test-image', mimeType: 'image/png' };
   pi.sendUserMessage = (...args) => sent.push(args);
   ctx.isIdle = () => false;
-  const result = await pi.handlers.get('input')({ text: '$commit', streamingBehavior: 'followUp' }, ctx);
+  const result = await pi.handlers.get('input')({ text: '$commit', images: [image] }, ctx);
   assert.deepEqual(result, { action: 'handled' });
-  assert.equal(pi.model.id, 'original');
+  assert.equal(pi.model, original);
   assert.equal(pi.thinkingLevel, 'high');
   ctx.isIdle = () => true;
   await pi.handlers.get('agent_settled')({}, ctx);
-  assert.deepEqual(sent, [[[{ type: 'text', text: '$commit' }], { expandPromptTemplates: true }]]);
+  assert.deepEqual(sent, [[[{ type: 'text', text: '$commit' }, image], { expandPromptTemplates: true }]]);
   await pi.handlers.get('input')({ text: sent[0][0][0].text }, ctx);
-  assert.deepEqual(pi.model, { provider: 'openai-codex', id: 'gpt-6.1-sol' });
+  assert.equal(pi.model, original);
   assert.equal(pi.thinkingLevel, 'low');
   await pi.handlers.get('agent_settled')({}, ctx);
   assert.equal(pi.model, original);
   assert.equal(pi.thinkingLevel, 'high');
 });
 
-test('unavailable Sol or missing authentication blocks the commit without switching models', async () => {
-  for (const failure of ['missing-model', 'missing-auth']) {
-    const pi = await install();
-    const ctx = modelContext(pi);
-    const notices = [];
-    ctx.ui.notify = (...args) => notices.push(args);
-    if (failure === 'missing-model') ctx.modelRegistry.find = () => undefined;
-    else pi.setModel = async () => false;
-    assert.deepEqual(await pi.handlers.get('input')({ text: '$commit' }, ctx), { action: 'handled' });
-    assert.equal(pi.model.id, 'original');
-    assert.equal(pi.thinkingLevel, 'high');
-    assert.equal(notices[0][1], 'error');
-  }
-});
-
-test('restoration waits through retries and does not overwrite a manual model selection', async () => {
+test('restoration waits through retries and leaves a manually selected model alone', async () => {
   const pi = await install();
   const ctx = modelContext(pi);
   await pi.handlers.get('input')({ text: '$commit' }, ctx);
   await pi.handlers.get('agent_end')?.({}, ctx);
-  assert.equal(pi.model.id, 'gpt-6.1-sol');
+  assert.equal(pi.model.id, 'claude-opus-5-5');
   assert.equal(pi.thinkingLevel, 'low');
-  pi.model = { provider: 'other', id: 'manually-selected' };
+  pi.model = { ...pi.model, provider: 'other' };
   pi.thinkingLevel = 'medium';
   await pi.handlers.get('agent_settled')({}, ctx);
-  assert.equal(pi.model.id, 'manually-selected');
+  assert.equal(pi.model.provider, 'other');
   assert.equal(pi.thinkingLevel, 'medium');
+});
+
+test('repeated commit input preserves the original reasoning for restoration', async () => {
+  const pi = await install();
+  const ctx = modelContext(pi);
+  await pi.handlers.get('input')({ text: '$commit' }, ctx);
+  await pi.handlers.get('input')({ text: '/skill:commit' }, ctx);
+  await pi.handlers.get('agent_settled')({}, ctx);
+  assert.equal(pi.thinkingLevel, 'high');
+});
+
+test('missing current model blocks commit with an error', async () => {
+  const pi = await install();
+  const ctx = modelContext(pi);
+  const notices = [];
+  pi.model = undefined;
+  ctx.ui.notify = (...args) => notices.push(args);
+  assert.deepEqual(await pi.handlers.get('input')({ text: '$commit' }, ctx), { action: 'handled' });
+  assert.equal(pi.thinkingLevel, 'high');
+  assert.deepEqual(notices, [['Commit not started: select a current model with /model first.', 'error']]);
 });
 
 test('agent reading the loaded commit skill preserves reasoning', async () => {
@@ -143,7 +152,7 @@ test('other skills and ordinary commit discussion preserve reasoning', async () 
     const pi = await install();
     await pi.handlers.get('input')({ text }, modelContext(pi));
     assert.equal(pi.thinkingLevel, 'high', text);
-    assert.equal(pi.model.id, 'original');
+    assert.equal(pi.model.id, 'claude-opus-5-5');
   }
 });
 
