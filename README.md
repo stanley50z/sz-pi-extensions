@@ -34,11 +34,40 @@ This package includes UI and automation helpers. Live-source research is delegat
 
 ## Install
 
-Clone the repo to your user root, then install the local path:
+Clone the repo to your user root, then run the setup script:
 
 ```bash
 git clone https://github.com/stanley50z/sz-pi-extensions.git ~/sz-pi-extensions
 cd ~/sz-pi-extensions
+python3 setup.py
+```
+
+On Windows, use `python setup.py`. Setup requires Python 3.10 or newer. It pulls the latest checkout with `git pull --ff-only`, installs the locked npm dependencies, installs or updates Pi and its companion CLIs, registers this local package, and checks package loading, tools, and authentication. It includes Firecrawl, but does not install unrelated applications such as Herdr, local search servers, or the standalone Chrome extension.
+
+Platform prerequisites:
+
+- **macOS:** Install [Homebrew](https://brew.sh/) first. Setup uses it to install missing Git and Node, and install or update `fd`, `ripgrep`, and Ketch. A Homebrew-managed Codex stays managed by Homebrew.
+- **Windows:** WinGet must be available for missing Git, Node, `fd`, `ripgrep`, and Go. Approve any Windows elevation prompts. Setup refreshes its process PATH after WinGet installs; reopen your shell afterward so it sees those changes too.
+- **Linux:** Debian/Ubuntu systems can provision missing tools with `apt-get`. Run `sudo -v` first if they need installing. Other distributions must provide Git, Node, npm, `fd`, `ripgrep`, and Go themselves. Node must be 22 or newer; if the distribution supplies an older release, install a supported Node version before rerunning. Global npm installs must be writable by your account; use a user-owned Node installation rather than running this whole script as root.
+
+Outside macOS, setup builds the latest Ketch with Go and places it in the existing Ketch directory, or beside Pi when installing it for the first time. On Debian/Ubuntu, it exposes `fdfind` as `fd` beside Pi when necessary. Existing Claude Code installations use `claude update`; fresh Claude Code, Pi, Firecrawl, and non-Homebrew Codex installations use npm. Existing Node and Git are retained when present; Node's minimum version is checked. Setup never forces an overwrite of a conflicting global executable.
+
+Run the same command again to update or repair the stack. A dirty checkout stops the Git update; setup never stashes, resets, or discards your changes. To install your current checkout without pulling, or just inspect the installation:
+
+```bash
+python3 setup.py --skip-pull
+python3 setup.py --check
+```
+
+Checks report remaining actions such as `claude auth login`, `codex login`, `firecrawl login`, or unavailable Ketch backends. Setup does not copy credentials, open login flows, select a paid plan, or bypass OS approval. Once any reported actions are complete, rerun `--check`, then restart Pi. Check mode does not install tools or pull Git; provider health checks can contact their services. Verification includes a no-prompt Pi startup check and never sends a model prompt.
+
+Exit codes are `0` for ready, `2` for remaining user actions or failed checks, and `1` for installation errors. Commands time out after 600 seconds, with checks limited to 30 seconds. Override the ceiling with `--timeout SECONDS`. Timed-out commands and their child processes are stopped.
+
+Each run saves `setup.log`, `report.json`, and, on exceptions, `crash-report.txt` with Python stack traces under `~/.pi/agent/logs/setup/<UTC-timestamp>-<pid>/`. `PI_CODING_AGENT_DIR` changes that root. These reports replace native crash dumps for the installer. Full command output is preserved; review logs before sharing them. Installer regression-test logs are kept locally under `~/.pi/agent/logs/setup-validation/` when validation output is captured there.
+
+For a package-only install without provisioning external tools, the original commands still work:
+
+```bash
 npm install
 pi install ~/sz-pi-extensions
 ```
