@@ -148,11 +148,13 @@ When a `claude-bridge` model is selected, the same slot shows the Claude plan's 
 
 Fable allowance validation logs are saved in `~/.pi/agent/logs/fable-footer-validation/`, including the failing regression checks, passing tests, `typecheck.txt`, `full.txt`, and the live-account footer output in `live.txt` and `e2e.json`. A failed live check writes its stack trace to `crash-report.txt` there.
 
-The bottom-left token counters use `R` for input read by the model, `W` for generated output, `CR` for cache reads, and `CW` for cache writes. These are session totals; zero-valued counters are hidden. `k` means thousand and `M` means million. The following dollar amount is estimated session cost, while `ctx` is current context-window usage.
+The bottom-left token counters use `R` for input read by the model, `W` for generated output, `CR` for cache reads, and `CW` for cache writes. These are session totals; zero-valued counters are hidden. `k` means thousand and `M` means million. The following dollar amount is estimated session cost, while `ctx` shows current context-window usage and total capacity, for example `ctx:34%(1.0M)`. The percentage is rounded to an integer; capacity uses two significant figures (for example `270k` or `1.1M`). Context is hidden while usage is unknown.
 
 Claude Bridge's session cost on the left is the API-equivalent value of its recorded tokens, not your subscription bill or Extra Usage charges. The footer prices each message using its own model's current Anthropic rates from Pi's model registry, including input, output, cache reads, and cache writes. It also reprices resumed zero-cost history without changing saved messages. Other providers keep their reported costs. If a Bridge model is absent from the catalog, the total shows `cost:unavailable` instead of a misleading zero or partial sum. Costs retain three significant figures.
 
 Claude cost validation output and failure stack traces are saved in `~/.pi/agent/logs/claude-cost-validation/`: `red.txt`, `green.txt`, `full.txt`, and `e2e.json`. The real-session check uses a disposable copy and records only usage totals and footer lines. A failed real-session check writes `crash-report.txt` there.
+
+Context-capacity validation output and assertion stack traces are saved under `~/.pi/agent/logs/context-footer-validation/`: `red.txt`, `green.txt`, `full.txt`, and `e2e.json`. A failed real-session check writes `crash-report.txt` there.
 
 ## Image paste over SSH
 

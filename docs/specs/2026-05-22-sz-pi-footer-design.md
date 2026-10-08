@@ -35,7 +35,7 @@
 - Include input, output, cache read, cache write, calculated cost, and context usage in compact token units: serves default-style footer parity.
 - Reprice each Claude Bridge assistant message using its own model's current Anthropic catalog entry from `ctx.modelRegistry.find()` and Pi's `calculateCost()`. Include cached tokens, recalculate resumed history, and clone usage before calculating so rendering never mutates session entries. Keep other providers' reported costs. Show `cost:unavailable` for the whole total if any Bridge model is absent from the catalog rather than displaying a partial sum.
 - Format calculated cost to three significant figures for both subscription and API-key sessions; subscription usage in the center already identifies subscription authentication, so omit `(sub)` from the cost.
-- Display context as `ctx:<percent>%`, rounded to an integer: serves compact context visibility without exposing the model's maximum context window or auto-compaction label.
+- Display context as `ctx:<percent>%(<capacity>)`, with integer percentage and total context-window capacity formatted to two significant figures in compact units (for example `ctx:34%(1.0M)` or `ctx:34%(270k)`). Hide it while usage is unknown; omit the auto-compaction label.
 - Display provider prefix only when multiple providers are available; map `openai` to `OpenAI`: serves model clarity without wasting width or exposing an implementation-facing provider ID.
 - Map `gpt-5.6-sol` to `5.6 Sol` and `gpt-5.6-luna` to `5.6 Luna` in the footer while preserving unknown model IDs verbatim.
 - Display reasoning as `@<level>` beside the model: serves compact visibility into the current reasoning mode.
@@ -114,7 +114,7 @@ Responsibilities:
 5. `message_end` replaces the live estimate with the authoritative provider-reported output-token total divided by assistant generation time; `turn_end` remains a compatibility fallback and refreshes subscription limits.
 6. Git Diff Viewer emits `sz-git-view:update` with repository totals and per-file counts. The footer requests a render without opening a server or browser.
 7. Footer `render(width)` builds line 1 from left-aligned cwd/branch, a preferably centered session name clamped to avoid overlap, and right-aligned live/last speed or `0 tok/s`.
-8. Footer `render(width)` builds line 2 from cumulative usage, three-significant-figure cost, integer `ctx:<percent>%`, centered git plus subscription usage or `API`, model/provider/reasoning, and extension statuses.
+8. Footer `render(width)` builds line 2 from cumulative usage, three-significant-figure cost, integer `ctx:<percent>%(<capacity>)` with two-significant-figure capacity, centered git plus subscription usage or `API`, model/provider/reasoning, and extension statuses.
 9. When expanded, footer `render(width)` appends up to five files sorted by total changed lines, with `+N -N` counts.
 10. Width calculations use `visibleWidth()` and `truncateToWidth()` so wide Unicode and ANSI styling do not exceed terminal width.
 

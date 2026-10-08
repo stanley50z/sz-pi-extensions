@@ -146,6 +146,18 @@ function formatTokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
+const contextWindowFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  minimumSignificantDigits: 2,
+  maximumSignificantDigits: 2,
+  useGrouping: false,
+});
+
+// Format the footer's context capacity separately from cumulative token counters.
+function formatContextWindow(count: number): string {
+  return contextWindowFormatter.format(count).replace("K", "k");
+}
+
 const costFormatter = new Intl.NumberFormat("en-US", {
   minimumSignificantDigits: 3,
   maximumSignificantDigits: 3,
@@ -568,9 +580,9 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
           const usingSubscription = ctx.model ? ctx.modelRegistry?.isUsingOAuth?.(ctx.model) : false;
           statsParts.push(costAvailable ? `$${formatCost(cost)}` : "cost:unavailable");
 
-          const contextPercent = ctx.getContextUsage?.()?.percent;
-          if (contextPercent !== null && contextPercent !== undefined) {
-            statsParts.push(`ctx:${Math.round(contextPercent)}%`);
+          const contextUsage = ctx.getContextUsage?.();
+          if (contextUsage?.percent !== null && contextUsage?.percent !== undefined) {
+            statsParts.push(`ctx:${Math.round(contextUsage.percent)}%(${formatContextWindow(contextUsage.contextWindow)})`);
           }
 
           let left = theme.fg("dim", statsParts.join(" "));

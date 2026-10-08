@@ -284,8 +284,8 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
     assert.doesNotMatch(lines[1], /↑|↓/);
     assert.match(lines[1], /\$0\.123/);
     assert.doesNotMatch(lines[1], /\(sub\)/);
-    assert.match(lines[1], /ctx:42%/);
-    assert.doesNotMatch(lines[1], /200k|\(auto\)|42\.0%/);
+    assert.match(lines[1], /ctx:42%\(200k\)/);
+    assert.doesNotMatch(lines[1], /\(auto\)|42\.0%/);
     assert.match(lines[1], /\+0\s+−0/);
     assert.match(lines[1], /\(OpenAI\) test-model @high ⚡fast/);
     assert.doesNotMatch(lines[1], /tok\/s/);
@@ -294,6 +294,37 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
     Date.now = originalNow;
     process.chdir(originalCwd);
   }
+});
+
+test('footer appends the context window with two significant figures', async (t) => {
+  const { default: install } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({
+    contextUsage: { tokens: 340000, contextWindow: 1000000, percent: 34 },
+  });
+  install(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  assert.match(footer.render(120)[1], /ctx:34%\(1\.0M\)/);
+
+  for (const [contextWindow, label] of [
+    [1048576, '1.0M'], [1140000, '1.1M'], [272000, '270k'],
+    [128000, '130k'], [32000, '32k'], [999999, '1.0M'],
+  ]) {
+    ctx.getContextUsage = () => ({ tokens: 1, contextWindow, percent: 34.4 });
+    assert.ok(footer.render(120)[1].includes(`ctx:34%(${label})`));
+    for (const width of [20, 40, 80, 120]) {
+      for (const line of footer.render(width)) assert.ok(visibleWidth(line) <= width);
+    }
+  }
+
+  ctx.getContextUsage = () => ({ tokens: 0, contextWindow: 1000000, percent: 0 });
+  assert.match(footer.render(120)[1], /ctx:0%\(1\.0M\)/);
+  ctx.getContextUsage = () => ({ tokens: null, contextWindow: 1000000, percent: null });
+  assert.doesNotMatch(footer.render(120)[1], /ctx:/);
+  ctx.getContextUsage = () => undefined;
+  assert.doesNotMatch(footer.render(120)[1], /ctx:/);
 });
 
 test('footer uses compact OpenAI model, reasoning, and fast-mode labels', async () => {
