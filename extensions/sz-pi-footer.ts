@@ -560,10 +560,10 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
 
           // ── line 2 left: original stats plus context usage ─────────
           const statsParts: string[] = [];
-          if (input) statsParts.push(`↑${formatTokens(input)}`);
-          if (output) statsParts.push(`↓${formatTokens(output)}`);
-          if (cacheRead) statsParts.push(`R${formatTokens(cacheRead)}`);
-          if (cacheWrite) statsParts.push(`W${formatTokens(cacheWrite)}`);
+          if (input) statsParts.push(`R${formatTokens(input)}`);
+          if (output) statsParts.push(`W${formatTokens(output)}`);
+          if (cacheRead) statsParts.push(`CR${formatTokens(cacheRead)}`);
+          if (cacheWrite) statsParts.push(`CW${formatTokens(cacheWrite)}`);
 
           const usingSubscription = ctx.model ? ctx.modelRegistry?.isUsingOAuth?.(ctx.model) : false;
           statsParts.push(costAvailable ? `$${formatCost(cost)}` : "cost:unavailable");

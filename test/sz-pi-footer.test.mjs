@@ -280,10 +280,8 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
 
     assert.equal(lines.length, 2);
     assert.match(lines[0], /sz-pi-footer-[^ ]+ \(feature-branch\)\s+session-a\s+800 tok\/s$/);
-    assert.match(lines[1], /↑1\.2k/);
-    assert.match(lines[1], /↓800/);
-    assert.match(lines[1], /R300/);
-    assert.match(lines[1], /W40/);
+    assert.match(lines[1], /^R1\.2k W800 CR300 CW40 /);
+    assert.doesNotMatch(lines[1], /↑|↓/);
     assert.match(lines[1], /\$0\.123/);
     assert.doesNotMatch(lines[1], /\(sub\)/);
     assert.match(lines[1], /ctx:42%/);
@@ -485,7 +483,7 @@ test('footer keeps per-model Bridge pricing and other providers costs after swit
   const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
   // Opus $0.664 + Fable $0.910 + the other provider's reported $0.123 = $1.697.
   assert.match(footer.render(160)[1], /\$1\.70\s/);
-  assert.match(footer.render(160)[1], /R6\.0M/);
+  assert.match(footer.render(160)[1], /\bCR6\.0M\b/);
 });
 
 test('footer reports unavailable cost rather than zero or a partial sum for an unknown Bridge model', async (t) => {
