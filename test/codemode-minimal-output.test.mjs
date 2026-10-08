@@ -139,7 +139,7 @@ test("nested skill and subagent exceptions stay visible and compact arguments su
     await handlers.get("tool_result")({
       toolCallId: call.id, parentToolCallId: "batch", toolName: call.name, input: call.input,
       content: [{ type: "text", text: call.name === "read" ? "---\nname: declared-skill\n---\nPRIVATE_SKILL_BODY" : "PRIVATE_NESTED_RESULT" }],
-      details: call.name === "subagent_spawn" ? { subagentModel: "openai-codex/gpt-6-astra" } : {}, isError: false,
+      details: call.name === "subagent_spawn" ? { subagentModel: "openai/gpt-6-astra" } : {}, isError: false,
     });
   }
   const completed = { ...result, details: { calls: nested.map(({ id, name, input }) => ({

@@ -36,7 +36,7 @@ async function install() {
 test('Luna starts with max thinking effort', async () => {
   const pi = await install();
 
-  await pi.handlers.get('session_start')({}, { model: model('openai-codex', 'gpt-5.6-luna') });
+  await pi.handlers.get('session_start')({}, { model: model('openai', 'gpt-5.6-luna') });
 
   assert.deepEqual(pi.selectedLevels, ['max']);
 });
@@ -46,7 +46,7 @@ test('DeepSeek gets max thinking effort when selected', async () => {
 
   await pi.handlers.get('model_select')({
     model: model('deepseek', 'deepseek-v4-pro'),
-    previousModel: model('openai-codex', 'gpt-5.6-sol'),
+    previousModel: model('openai', 'gpt-5.6-sol'),
     source: 'cycle',
   }, { model: model('deepseek', 'deepseek-v4-pro') });
 
@@ -56,7 +56,7 @@ test('DeepSeek gets max thinking effort when selected', async () => {
 test('5.6 Sol starts with high thinking effort', async () => {
   const pi = await install();
 
-  await pi.handlers.get('session_start')({}, { model: model('openai-codex', 'gpt-5.6-sol') });
+  await pi.handlers.get('session_start')({}, { model: model('openai', 'gpt-5.6-sol') });
 
   assert.deepEqual(pi.selectedLevels, ['high']);
 });
@@ -66,7 +66,7 @@ test('Claude Fable 5.1 gets high thinking effort when selected', async () => {
 
   await pi.handlers.get('model_select')({
     model: model('github-copilot', 'claude-fable-5.1'),
-    previousModel: model('openai-codex', 'gpt-5.6-luna'),
+    previousModel: model('openai', 'gpt-5.6-luna'),
     source: 'set',
   }, { model: model('github-copilot', 'claude-fable-5.1') });
 
@@ -77,10 +77,10 @@ test('unconfigured models are left unchanged', async () => {
   const pi = await install();
 
   await pi.handlers.get('model_select')({
-    model: model('openai-codex', 'gpt-5.6-terra'),
-    previousModel: model('openai-codex', 'gpt-5.6-luna'),
+    model: model('openai', 'gpt-5.6-terra'),
+    previousModel: model('openai', 'gpt-5.6-luna'),
     source: 'set',
-  }, { model: model('openai-codex', 'gpt-5.6-terra') });
+  }, { model: model('openai', 'gpt-5.6-terra') });
 
   assert.deepEqual(pi.selectedLevels, []);
 });

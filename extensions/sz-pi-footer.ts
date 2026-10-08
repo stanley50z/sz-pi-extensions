@@ -167,7 +167,7 @@ function openInFileManager(cwd: string): void {
 }
 
 function formatProviderName(provider: string): string {
-  return provider === "openai-codex" ? "OpenAI" : provider;
+  return provider === "openai" ? "OpenAI" : provider;
 }
 
 function formatModelName(model: string): string {
@@ -194,10 +194,10 @@ function resetSpeed() {
 
 // ── extension ─────────────────────────────────────────────────────────
 
-type FooterDeps = { readClaudeRateLimits: typeof readClaudeRateLimits };
+type FooterDeps = { readClaudeRateLimits: typeof readClaudeRateLimits; readCodexRateLimits: typeof readCodexRateLimits };
 
-// Builds the footer extension; tests replace the Claude Code usage reader.
-export function createFooterExtension(deps: FooterDeps = { readClaudeRateLimits }) {
+// Builds the footer extension; tests replace the Claude Code and Codex usage readers.
+export function createFooterExtension(deps: FooterDeps = { readClaudeRateLimits, readCodexRateLimits }) {
   return (pi: ExtensionAPI) => footerExtension(pi, deps);
 }
 
@@ -259,9 +259,10 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
 
   // The plan whose five-hour and weekly usage fills the centred slot, if any. Pi cannot see how
   // Claude Code authenticates, so claude-bridge always asks and falls back to API without a plan.
+  // OpenAI counts only when signed in with ChatGPT, whose plan usage the Codex app-server reports.
   function rateLimitSource(ctx: ExtensionContext): "codex" | "claude" | null {
     if (ctx.model?.provider === "claude-bridge") return "claude";
-    return ctx.model?.provider === "openai-codex" &&
+    return ctx.model?.provider === "openai" &&
       Boolean(ctx.modelRegistry?.isUsingOAuth?.(ctx.model)) ? "codex" : null;
   }
 
@@ -285,7 +286,7 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
     const current = () => _ctx !== null && rateLimitSource(_ctx) === source;
     const task = (async () => {
       try {
-        const limits = source === "claude" ? await deps.readClaudeRateLimits() : await readCodexRateLimits();
+        const limits = source === "claude" ? await deps.readClaudeRateLimits() : await deps.readCodexRateLimits();
         if (!current()) return;
         if (!limits) showRateLimits(null, "hidden");
         else if (source === "codex") pi.events.emit(CODEX_RATE_LIMITS_EVENT, limits);

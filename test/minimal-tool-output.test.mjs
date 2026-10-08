@@ -386,7 +386,7 @@ test("ultra-collapsed view keeps subagent calls visible without their prompts", 
         prompt: "Review the change",
         name: "review",
         harness: "pi",
-        model: "openai-codex/gpt-6-astra",
+        model: "openai/gpt-6-astra",
         reasoning_effort: "low",
       },
     },
@@ -471,7 +471,7 @@ test("spawn rows retain the inherited model after execution and session restore"
   });
   const tool = makeTool();
   const args = { name: "review", harness: "pi", reasoning_effort: "low" };
-  const ctx = { model: { provider: "openai-codex", id: "gpt-6-astra" } };
+  const ctx = { model: { provider: "openai", id: "gpt-6-astra" } };
   const result = await tool.execute("inherited", args, undefined, undefined, ctx);
   assert.equal(result.details.retained, true);
   ctx.model = { provider: "github-copilot", id: "claude-fable-5-1" };
@@ -520,7 +520,7 @@ test("native spawn rows retain the resolved default model after execution and re
   const tool = makeTool();
   const args = { name: "smoke-test", harness: "claude" };
   const result = await tool.execute("native", args, undefined, undefined, {
-    model: { provider: "openai-codex", id: "gpt-6-astra" },
+    model: { provider: "openai", id: "gpt-6-astra" },
   });
   assert.equal(result.details.subagentModel, "claude-opus-5-5");
   assert.equal(result.details.retained, true);
@@ -580,7 +580,7 @@ test("failed native startup does not invent a model or wait forever", async () =
     },
   }, source);
   const result = await tool.execute("failed", { harness: "claude" }, undefined, undefined, {
-    model: { provider: "openai-codex", id: "gpt-6-astra" },
+    model: { provider: "openai", id: "gpt-6-astra" },
   });
   assert.equal(result.details.subagentModel, undefined);
   assert.equal(listeners.size, 0);
