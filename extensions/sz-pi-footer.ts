@@ -18,7 +18,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import { readClaudeRateLimits } from "../lib/claude-rate-limits.ts";
+import { readClaudeRateLimits, type ClaudeRateLimits } from "../lib/claude-rate-limits.ts";
 import {
   readCodexRateLimits,
   type CodexRateLimitWindow,
@@ -114,16 +114,22 @@ function extractCodexRateLimitWindows(data: unknown): CodexRateLimitWindow[] | u
 function formatRateLimits(
   status: "hidden" | "loading" | "ready" | "error",
   windows: CodexRateLimitWindow[] | null,
+  useFableAllowance: boolean,
+  fableUsedPercent: number | undefined,
 ): string | null {
+  const label = useFableAllowance ? "fable" : "wk";
   if (status === "hidden") return null;
-  if (status === "loading") return "5h:… wk:…";
-  if (status === "error") return "5h:! wk:!";
+  if (status === "loading") return `5h:… ${label}:…`;
+  if (status === "error") return `5h:! ${label}:!`;
 
   const percentageFor = (duration: number) => {
     const window = windows?.find((candidate) => candidate.windowDurationMins === duration);
     return window ? `${Math.round(window.usedPercent)}%` : "—";
   };
-  return `5h:${percentageFor(300)} wk:${percentageFor(10080)}`;
+  const allowance = useFableAllowance
+    ? fableUsedPercent === undefined ? "—" : `${Math.round(fableUsedPercent)}%`
+    : percentageFor(10080);
+  return `5h:${percentageFor(300)} ${label}:${allowance}`;
 }
 
 // ── formatting helpers ────────────────────────────────────────────────
@@ -208,6 +214,7 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
   let gitDiffSummary = getGlobalGitViewSummary();
   let gitDetailsExpanded = false;
   let rateLimitWindows: CodexRateLimitWindow[] | null = null;
+  let fableUsedPercent: number | undefined;
   let rateLimitStatus: "hidden" | "loading" | "ready" | "error" = "hidden";
   let runningSubagents: RunningSubagent[] = [];
   let rateLimitRefresh: Promise<void> | null = null;
@@ -257,8 +264,8 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
     requestFooterRender?.();
   });
 
-  // The plan whose five-hour and weekly usage fills the centred slot, if any. Pi cannot see how
-  // Claude Code authenticates, so claude-bridge always asks and falls back to API without a plan.
+  // Selects the plan for the centred usage slot. Pi cannot see how Claude Code authenticates,
+  // so claude-bridge always asks and shows API when no plan applies.
   // OpenAI counts only when signed in with ChatGPT, whose plan usage the Codex app-server reports.
   function rateLimitSource(ctx: ExtensionContext): "codex" | "claude" | null {
     if (ctx.model?.provider === "claude-bridge") return "claude";
@@ -266,8 +273,13 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
       Boolean(ctx.modelRegistry?.isUsingOAuth?.(ctx.model)) ? "codex" : null;
   }
 
-  function showRateLimits(windows: CodexRateLimitWindow[] | null, status: typeof rateLimitStatus = "ready"): void {
+  function showRateLimits(
+    windows: CodexRateLimitWindow[] | null,
+    status: typeof rateLimitStatus = "ready",
+    fableAllowance?: number,
+  ): void {
     rateLimitWindows = windows;
+    fableUsedPercent = fableAllowance;
     rateLimitStatus = status;
     if (_ctx) installFooter(_ctx);
   }
@@ -286,11 +298,12 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
     const current = () => _ctx !== null && rateLimitSource(_ctx) === source;
     const task = (async () => {
       try {
-        const limits = source === "claude" ? await deps.readClaudeRateLimits() : await deps.readCodexRateLimits();
+        const limits: ClaudeRateLimits | null = source === "claude"
+          ? await deps.readClaudeRateLimits() : await deps.readCodexRateLimits();
         if (!current()) return;
         if (!limits) showRateLimits(null, "hidden");
         else if (source === "codex") pi.events.emit(CODEX_RATE_LIMITS_EVENT, limits);
-        else showRateLimits(limits.windows);
+        else showRateLimits(limits.windows, "ready", limits.fableUsedPercent);
       } catch {
         if (current()) showRateLimits(null, "error");
       }
@@ -588,7 +601,11 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
             );
             centreParts.push(colouredDiff);
           }
-          const rateLimitsText = formatRateLimits(rateLimitStatus, rateLimitWindows);
+          const useFableAllowance = ctx.model?.provider === "claude-bridge" &&
+            /^(claude-)?fable(?:[-.]|$)/i.test(ctx.model.id);
+          const rateLimitsText = formatRateLimits(
+            rateLimitStatus, rateLimitWindows, useFableAllowance, fableUsedPercent,
+          );
           const usingPlan = usingSubscription || ctx.model?.provider === "claude-bridge";
           if (ctx.model?.provider === "github-copilot") {
             const usage = copilotUsage.peek();

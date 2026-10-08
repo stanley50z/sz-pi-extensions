@@ -507,7 +507,7 @@ test('footer reports unavailable cost rather than zero or a partial sum for an u
   assert.doesNotMatch(line, /\$/);
 });
 
-async function renderClaudeBridgeFooter(readPlanUsage) {
+async function renderClaudeBridgeFooter(readPlanUsage, modelId = 'claude-opus-5-5') {
   const tick = () => new Promise((resolve) => setImmediate(resolve));
   // Answer one tick late so the loading state is observable first.
   const readClaudeRateLimits = async () => {
@@ -518,7 +518,7 @@ async function renderClaudeBridgeFooter(readPlanUsage) {
   const pi = createFakePi();
   const ctx = createFakeContext({
     usingSubscription: false,
-    model: { provider: 'claude-bridge', id: 'claude-fable-5-1' },
+    model: { provider: 'claude-bridge', id: modelId },
   });
   const line = () => ctx.footerFactory({ requestRender() {} }, plainTheme, footerData).render(120)[1];
 
@@ -540,6 +540,71 @@ test('footer shows Claude plan usage for claude-bridge models instead of API', a
   assert.match(loading, /5h:… wk:…/);
   assert.match(settled, /5h:12% wk:34%/);
   assert.doesNotMatch(loading + settled, /\sAPI\s/);
+});
+
+test('footer shows Fable allowance instead of weekly usage for Claude Bridge Fable', async () => {
+  const { loading, settled } = await renderClaudeBridgeFooter(async () => ({
+    windows: [
+      { usedPercent: 12.4, windowDurationMins: 300 },
+      { usedPercent: 34, windowDurationMins: 10080 },
+    ],
+    fableUsedPercent: 56.7,
+  }), 'claude-fable-5-1');
+
+  assert.match(loading, /5h:… fable:…/);
+  assert.match(settled, /5h:12% fable:57%/);
+  assert.doesNotMatch(loading + settled, /wk:|\sAPI\s/);
+});
+
+test('footer does not substitute weekly usage when Fable allowance is missing', async () => {
+  const { settled } = await renderClaudeBridgeFooter(async () => ({
+    windows: [
+      { usedPercent: 12, windowDurationMins: 300 },
+      { usedPercent: 34, windowDurationMins: 10080 },
+    ],
+  }), 'fable');
+
+  assert.match(settled, /5h:12% fable:—/);
+  assert.doesNotMatch(settled, /wk:|fable:34%/);
+});
+
+test('footer marks Fable allowance as failed when the read fails', async () => {
+  const { settled } = await renderClaudeBridgeFooter(async () => {
+    throw new Error('claude unavailable');
+  }, 'claude-fable-5.1');
+
+  assert.match(settled, /5h:! fable:!/);
+  assert.doesNotMatch(settled, /wk:/);
+});
+
+test('footer switches allowance with the model while a Claude usage read is pending', async (t) => {
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const opus = createFakeContext({ model: { provider: 'claude-bridge', id: 'claude-opus-5-5' } });
+  const fable = createFakeContext({ model: { provider: 'claude-bridge', id: 'claude-fable-5-1' } });
+  let resolveUsage;
+  createFooterExtension({
+    readClaudeRateLimits: () => new Promise(resolve => { resolveUsage = resolve; }),
+  })(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, fable));
+  const line = ctx => ctx.footerFactory({ requestRender() {} }, plainTheme, footerData).render(160)[1];
+  await pi.handlers.get('session_start')({}, opus);
+  await pi.handlers.get('model_select')({}, fable);
+  assert.match(line(fable), /5h:… fable:…/);
+  resolveUsage({
+    windows: [{ usedPercent: 12, windowDurationMins: 300 }, { usedPercent: 34, windowDurationMins: 10080 }],
+    fableUsedPercent: 57,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(line(fable), /5h:12% fable:57%/);
+  await pi.handlers.get('model_select')({}, opus);
+  resolveUsage({
+    windows: [{ usedPercent: 12, windowDurationMins: 300 }, { usedPercent: 34, windowDurationMins: 10080 }],
+    fableUsedPercent: 57,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(line(opus), /5h:12% wk:34%/);
+  assert.doesNotMatch(line(opus), /fable:/);
 });
 
 test('footer shows API for claude-bridge when Claude Code has no plan limits', async () => {

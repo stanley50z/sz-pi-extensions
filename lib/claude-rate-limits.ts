@@ -6,14 +6,18 @@ export interface ReadClaudeRateLimitsOptions {
   timeoutMs?: number;
 }
 
+export interface ClaudeRateLimits extends CodexRateLimits {
+  fableUsedPercent?: number;
+}
+
 /**
- * Reads the Claude plan's five-hour and weekly usage, the data behind Claude Code's `/usage`
+ * Reads the Claude plan's five-hour, weekly, and Fable allowance usage behind Claude Code's `/usage`
  * command, through a short-lived Claude Code process that never starts a turn. Resolves to null
  * when plan limits do not apply, such as API-key, Bedrock, or Vertex authentication.
  */
 export async function readClaudeRateLimits(
   options: ReadClaudeRateLimitsOptions = {},
-): Promise<CodexRateLimits | null> {
+): Promise<ClaudeRateLimits | null> {
   let release = () => {};
   const idle = new Promise<void>((resolve) => { release = resolve; });
   let timer: NodeJS.Timeout | undefined;
@@ -50,7 +54,11 @@ export async function readClaudeRateLimits(
         windows.push({ usedPercent, windowDurationMins });
       }
     }
-    return { windows };
+    const fableUsedPercent = usage.rate_limits.model_scoped
+      ?.find((window) => window.display_name.toLowerCase() === "fable")?.utilization;
+    return typeof fableUsedPercent === "number" && Number.isFinite(fableUsedPercent)
+      ? { windows, fableUsedPercent }
+      : { windows };
   } finally {
     clearTimeout(timer);
     release();

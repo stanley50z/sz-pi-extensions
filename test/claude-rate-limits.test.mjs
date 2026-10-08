@@ -40,6 +40,28 @@ test('reads five-hour and weekly plan usage from the Claude Code usage request',
   assert.equal(calls.closed, true);
 });
 
+test('reads Fable allowance separately from the overall weekly usage', async () => {
+  const { query } = fakeQuery(Promise.resolve({
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: 12, resets_at: null },
+      seven_day: { utilization: 34, resets_at: null },
+      model_scoped: [
+        { display_name: 'Other', utilization: 99, resets_at: null },
+        { display_name: 'Fable', utilization: 56.7, resets_at: null },
+      ],
+    },
+  }));
+
+  assert.deepEqual(await readClaudeRateLimits({ query }), {
+    windows: [
+      { usedPercent: 12, windowDurationMins: 300 },
+      { usedPercent: 34, windowDurationMins: 10080 },
+    ],
+    fableUsedPercent: 56.7,
+  });
+});
+
 test('omits a plan window that reports no utilization', async () => {
   const { query } = fakeQuery(Promise.resolve({
     rate_limits_available: true,
