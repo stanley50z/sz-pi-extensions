@@ -83,7 +83,9 @@ The Codex rate-limit client owns the short-lived app-server session used to read
 Responsibilities:
 
 - Start `codex app-server --stdio` and complete its initialize handshake.
-- Request `account/rateLimits/read` without reading or exposing credential files.
+- Request `account/rateLimits/read` without reading or exposing credential files. On `token_expired`, request `account/read` with `refreshToken: true`, then retry the usage read once. Propagate all other errors and failed refresh/retry attempts.
+- Use the separate Codex CLI account even when Pi uses the newer OpenAI subscription login, per the user's 2026-10-08 decision. These are account-wide Codex plan windows, not Pi-specific app quotas. The newer direct OAuth grant does not support quota reporting; see `docs/research/2026-10-08-openai-subscription-usage.md`.
+- Persist credential-safe failure summaries and diagnostic stack traces to the effective Pi agent directory's `logs/codex-rate-limits.log`, excluding raw upstream messages and bodies.
 - Validate and return primary/secondary windows by their reported durations.
 - Apply explicit request timeouts and terminate the child process after each read.
 

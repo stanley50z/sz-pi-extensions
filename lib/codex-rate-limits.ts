@@ -1,4 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export interface CodexRateLimitWindow {
   usedPercent: number;
@@ -22,6 +25,7 @@ interface PendingRequest {
 }
 
 class CodexAppServerClient {
+  operation = "startup";
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly timeoutMs: number;
   private readonly pending = new Map<number, PendingRequest>();
@@ -51,7 +55,16 @@ class CodexAppServerClient {
       capabilities: { experimentalApi: true, optOutNotificationMethods: null },
     });
     this.write({ method: "initialized" });
-    const result = await this.request("account/rateLimits/read");
+    let result: unknown;
+    try {
+      result = await this.request("account/rateLimits/read");
+    } catch (error) {
+      if (!(error instanceof Error) || !/\btoken_expired\b/.test(error.message)) throw error;
+      // Usage reads can reject stale tokens without refreshing the separate Codex login.
+      await this.request("account/read", { refreshToken: true });
+      result = await this.request("account/rateLimits/read");
+    }
+    this.operation = "decode-rate-limits";
     return decodeRateLimits(result);
   }
 
@@ -64,6 +77,7 @@ class CodexAppServerClient {
   }
 
   private request(method: string, params?: unknown): Promise<unknown> {
+    this.operation = method;
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -173,12 +187,26 @@ function decodeRateLimits(value: unknown): CodexRateLimits {
   return { windows };
 }
 
+// Reads the Codex CLI account's plan usage; refreshes an expired login once without starting a turn.
 export async function readCodexRateLimits(
   options: ReadCodexRateLimitsOptions = {},
 ): Promise<CodexRateLimits> {
   const client = new CodexAppServerClient(options);
   try {
     return await client.readRateLimits();
+  } catch (error) {
+    client.close();
+    // Upstream errors can embed response bodies. Persist only our operation and a safe summary.
+    const expired = error instanceof Error && /\btoken_expired\b/.test(error.message);
+    const report = new Error(`Codex usage lookup failed during ${client.operation}${expired ? ": token_expired" : ""}`);
+    try {
+      const directory = join(getAgentDir(), "logs");
+      await mkdir(directory, { recursive: true });
+      await appendFile(join(directory, "codex-rate-limits.log"), `${new Date().toISOString()} ${report.stack}\n`, "utf8");
+    } catch {
+      // A logging failure must not replace the original error returned to the footer.
+    }
+    throw error;
   } finally {
     client.close();
   }
