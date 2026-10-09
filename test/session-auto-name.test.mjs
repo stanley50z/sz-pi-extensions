@@ -112,7 +112,7 @@ test('names bridge sessions through the session registry as an isolated one-off 
   };
 
   install(pi);
-  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], model);
@@ -136,7 +136,7 @@ test('generates a session name after the first user prompt receives an answer', 
     },
   })(pi);
 
-  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx);
 
   assert.equal(calls.length, 1);
   assert.deepEqual(pi.setNames, ['Repository Inspection']);
@@ -158,7 +158,7 @@ test('persists a sanitized session name without adding a conversation turn', asy
     },
   })(pi);
 
-  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], ctx.model);
@@ -203,7 +203,7 @@ test('names Copilot sessions using the account endpoint resolved by authenticati
     },
   })(pi);
 
-  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx);
 
   assert.deepEqual(pi.setNames, ['Fix Copilot session auto naming']);
   assert.equal(model.baseUrl, 'https://api.individual.githubcopilot.com');
@@ -224,11 +224,11 @@ test('surfaces naming provider errors without saving partial output and allows r
   })(pi);
 
   await assert.rejects(
-    pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx),
+    pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx),
     /421 Misdirected Request/,
   );
   assert.deepEqual(pi.setNames, []);
-  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx);
   assert.deepEqual(pi.setNames, ['Fix session auto naming']);
 });
 
@@ -333,7 +333,7 @@ test('skips automatic naming when the session already has an explicit name', asy
     },
   })(pi);
 
-  await pi.handlers.get('agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await pi.handlers.get('agent_settled')({ type: 'agent_settled', messages: [] }, ctx);
 
   assert.equal(calls.length, 0);
   assert.deepEqual(pi.setNames, []);

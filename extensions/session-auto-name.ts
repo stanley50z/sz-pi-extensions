@@ -184,7 +184,9 @@ export function createSessionAutoNameExtension(deps?: SessionAutoNameDependencie
       });
     });
 
-    pi.on("agent_end", async (_event, ctx) => {
+    // Naming is session metadata work, not part of the turn that just finished.
+    // agent_end still carries that turn's signal, which is aborted after Escape.
+    pi.on("agent_settled", async (_event, ctx) => {
       await runNaming(ctx, { skipExisting: true, notify: false });
     });
   };
