@@ -13,6 +13,7 @@ This package includes UI and automation helpers. Live-source research is delegat
 - **Structured user questions** through the `ask_user` tool
 - **Session transcript copying** through `/copy-all`
 - **Windows-to-Mac SSH image paste** through Alt+V and a small Windows clipboard helper
+- **Clickable Mac preview/report links** through `artifact_link`, a shared loopback preview service, and the same SSH launcher
 - **Cwd-aware new sessions** through a `/new` TUI selector, with the current cwd preselected and recent project directories ranked next
 - **First-class local search** through `find_files` and `search_text`
 - **Compact tool output** for built-ins and local search, with short subagent call lines kept visible without exposing their prompts
@@ -161,6 +162,12 @@ Context-capacity validation output and assertion stack traces are saved under `~
 To paste Windows screenshots into Pi running on a Mac, start the connection from Windows Terminal with `python scripts\ssh-clipboard\ssh.py my-mac`. Copy a screenshot and press Alt+V in Pi. The helper transfers the image through SSH and adds it to the draft without submitting. Clipboard paste survives reconnects when Pi runs inside Herdr or tmux. Normal text paste is unchanged.
 
 See [setup, session resuming, and privacy details](scripts/ssh-clipboard/README.md). This needs the helper on Windows; installing the Mac extension alone cannot read the Windows clipboard.
+
+## Artifact links over SSH
+
+The clipboard-enabled SSH launcher also starts a shared preview service on the Mac and forwards loopback port `43136` to Windows. The `artifact_link` tool returns working browser URLs for files in each project's `data/previews/` or `.pi/artifacts/`, including relative assets. The extension directs agents to use those URLs instead of local file links while the service is active.
+
+Reconnect with `ssh mac` through the helper profile and run `/reload` in existing Pi panes. The Mac service persists across disconnects; the tunnel lasts only for the SSH connection. See [setup, standalone controls, security, and diagnostic paths](scripts/artifact-preview/README.md).
 
 ## Manual skill invocation
 

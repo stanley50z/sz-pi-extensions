@@ -45,7 +45,7 @@ For the short command, add this line to your PowerShell profile:
 . "$HOME\sz-pi-extensions\scripts\ssh-clipboard\profile.ps1"
 ```
 
-Open a new PowerShell tab and run `ssh mac`. The profile defines a shell function, not an SSH config alias. It intercepts only bare `ssh mac`; other hosts and commands with extra arguments, such as `ssh mac uptime` or `ssh -N mac`, still use ordinary SSH. Use `ssh.exe mac` to bypass the function. The helper stops when you exit the Mac shell. No always-running service or SSH configuration change is needed.
+Open a new PowerShell tab and run `ssh mac`. The profile defines a shell function, not an SSH config alias. It intercepts only bare `ssh mac`; other hosts and commands with extra arguments, such as `ssh mac uptime` or `ssh -N mac`, still use ordinary SSH. Use `ssh.exe mac` to bypass the function. The Windows clipboard helper stops when you exit the Mac shell. The launcher also forwards preview port `43136` and starts a shared Mac artifact service, which stays running across disconnects. No SSH configuration change is needed. See [artifact preview setup and controls](../artifact-preview/README.md); use `--no-preview` for clipboard-only connections.
 
 ### Pi inside Herdr
 
@@ -72,7 +72,7 @@ An existing plain `ssh` connection opened without the wrapper has no forwarding 
 
 ## Privacy and lifecycle
 
-The helper reads the clipboard only when you paste, not when it changes. Authenticated `/health` requests check connection reachability without capturing an image. The helper sends images, never clipboard text. Each connection has a random authentication token and its own remote socket. The Windows listener binds only to `127.0.0.1` on an OS-assigned port. No fixed port or Windows inbound firewall rule is needed.
+The helper reads the clipboard only when you paste, not when it changes. Authenticated `/health` requests check connection reachability without capturing an image. The helper sends images, never clipboard text. Each connection has a random authentication token and its own remote socket. The Windows clipboard listener binds only to `127.0.0.1` on an OS-assigned port. Preview forwarding separately uses fixed loopback port `43136`. No Windows inbound firewall rule is needed.
 
 The launcher atomically publishes that socket and token in `~/.pi/agent/ssh-clipboard/connections/<connection-id>.json` on the Mac, or under `PI_CODING_AGENT_DIR` when configured in the launching shell. The records have mode 0600 and the connections directory has mode 0700. Keep these files private; do not include them in bug reports. Pi checks ownership and permissions before reading them, then requires exactly one live authenticated connection. Inherited environment credentials never override discovery.
 

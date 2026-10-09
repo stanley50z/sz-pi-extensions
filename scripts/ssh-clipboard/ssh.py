@@ -1,4 +1,4 @@
-"""Open remote Pi or a Mac shell with clipboard forwarding. Run inside Windows Terminal."""
+"""Open remote Pi or a Mac shell with clipboard and preview forwarding. Run inside Windows Terminal."""
 import argparse
 import json
 import os
@@ -20,10 +20,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('host', help='SSH destination or host alias from ~/.ssh/config')
     parser.add_argument('--cwd', help='Working directory on the Mac')
+    parser.add_argument('--preview-port', type=int, default=43136, help='Loopback preview port on both machines (default: 43136)')
+    parser.add_argument('--no-preview', action='store_true', help='Disable the artifact preview service and tunnel for this connection')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--pi', default='pi', help='Pi executable on the Mac')
     mode.add_argument('--shell', action='store_true', help='Open a normal Mac login shell; run Pi yourself')
     args = parser.parse_args(argv[:split])
+    if not 1 <= args.preview_port <= 65535:
+        parser.error('--preview-port must be between 1 and 65535')
     if args.shell and pi_args:
         parser.error('--shell does not accept Pi arguments')
     if args.host.startswith('-') or not args.host.strip():
@@ -49,6 +53,9 @@ def main():
             f'print -r -- {shlex.quote(record)} > "$connection_file.tmp" || exit; '
             'mv -f -- "$connection_file.tmp" "$connection_file" || exit; '
         )
+        if not args.no_preview:
+            script += ('python3 "$HOME/sz-pi-extensions/scripts/artifact-preview/start.py" '
+                       f'--port {args.preview_port} >/dev/null || exit; ')
         if args.cwd:
             script += f'cd -- {shlex.quote(args.cwd)} || exit; '
         # Keep the parent shell alive to remove the socket when the login shell exits.
@@ -57,6 +64,7 @@ def main():
             'ssh', '-tt', '-o', 'ExitOnForwardFailure=yes',
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
             '-R', f'{socket_path}:127.0.0.1:{state["port"]}',
+            *([] if args.no_preview else ['-L', f'127.0.0.1:{args.preview_port}:127.0.0.1:{args.preview_port}']),
             args.host, shlex.join(['/bin/zsh', '-c' if args.shell else '-lic', script]),
         ]
         try:

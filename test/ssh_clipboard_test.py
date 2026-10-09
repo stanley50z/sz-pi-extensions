@@ -168,6 +168,27 @@ class ShellAliasTest(unittest.TestCase):
 
 
 class HelperLifecycleTest(unittest.TestCase):
+    def test_launcher_adds_loopback_preview_tunnel_and_remote_start(self):
+        import os
+        import sys
+        import tempfile
+        from unittest.mock import patch
+        sys.path.insert(0, str(ROOT))
+        try:
+            spec = importlib.util.spec_from_file_location('clipboard_launcher', ROOT / 'ssh.py')
+            launcher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(launcher)
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {'PI_CODING_AGENT_DIR': directory}), patch.object(sys, 'argv', ['ssh.py', '--shell', 'my-mac']):
+                with patch.object(launcher.subprocess, 'call', return_value=7) as ssh:
+                    self.assertEqual(launcher.main(), 7)
+                command = ssh.call_args.args[0]
+                self.assertEqual(command[command.index('-L') + 1], '127.0.0.1:43136:127.0.0.1:43136')
+                self.assertIn('artifact-preview/start.py', command[-1])
+                self.assertIn('--port 43136', command[-1])
+
     @unittest.skipUnless(__import__('sys').platform == 'darwin', 'Requires the Mac login shell')
     def test_launcher_publishes_private_remote_connection_record_and_removes_only_its_own(self):
         import json
@@ -199,7 +220,7 @@ class HelperLifecycleTest(unittest.TestCase):
                 'print("private connection published")\nraise SystemExit(7)\n', encoding='utf-8')
             env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
                    'ZDOTDIR': directory, 'PI_CODING_AGENT_DIR': str(agent_dir)}
-            run = subprocess.run([sys.executable, '-B', str(ROOT / 'ssh.py'), '--pi', sys.executable,
+            run = subprocess.run([sys.executable, '-B', str(ROOT / 'ssh.py'), '--no-preview', '--pi', sys.executable,
                                   'my-mac', '--', str(probe)], env=env, capture_output=True, text=True, timeout=20)
             self.assertEqual(run.returncode, 7, run.stderr)
             self.assertIn('private connection published', run.stdout)
@@ -234,7 +255,7 @@ class HelperLifecycleTest(unittest.TestCase):
             env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'], 'ZDOTDIR': directory}
             probe = 'import json,os; print(json.dumps({k: os.environ[k] for k in ("PI_SSH_CLIPBOARD_SOCKET", "PI_SSH_CLIPBOARD_TOKEN")}))'
             run = subprocess.run(
-                [sys.executable, '-B', str(ROOT / 'ssh.py'), '--shell', 'my-mac'],
+                [sys.executable, '-B', str(ROOT / 'ssh.py'), '--no-preview', '--shell', 'my-mac'],
                 input=shlex.join([sys.executable, '-c', probe]) + '\nexit 7\n',
                 env=env, capture_output=True, text=True, timeout=20)
             self.assertEqual(run.returncode, 7, run.stderr)
@@ -288,6 +309,8 @@ class HelperLifecycleTest(unittest.TestCase):
             self.assertEqual(run.returncode, 7, run.stderr)
             args = json.loads(record.read_text())
             self.assertIn('ExitOnForwardFailure=yes', args)
+            self.assertEqual(args[args.index('-L') + 1], '127.0.0.1:43136:127.0.0.1:43136')
+            self.assertIn('artifact-preview/start.py', args[-1])
             forward = args[args.index('-R') + 1]
             self.assertTrue(forward.startswith('/tmp/pi-clipboard-'))
             self.assertIn(':127.0.0.1:', forward)

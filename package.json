@@ -10,6 +10,7 @@
   "scripts": {
     "postinstall": "node ./scripts/install-append-system.mjs && node ./scripts/install-ketch.mjs",
     "test": "node --test",
+    "typecheck:artifact-link": "tsc --noEmit --skipLibCheck --strict --target es2023 --module nodenext extensions/artifact-link.ts",
     "typecheck:ssh-image-paste": "tsc --noEmit --skipLibCheck --strict --target es2023 --module nodenext extensions/ssh-image-paste.ts"
   },
   "bundledDependencies": [
