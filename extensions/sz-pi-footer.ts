@@ -185,7 +185,7 @@ function openInFileManager(cwd: string): void {
 }
 
 function formatProviderName(provider: string): string {
-  return provider === "openai" ? "OpenAI" : provider;
+  return provider === "openai-codex" ? "OpenAI" : provider;
 }
 
 function formatModelName(model: string): string {
@@ -278,10 +278,10 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
 
   // Selects the plan for the centred usage slot. Pi cannot see how Claude Code authenticates,
   // so claude-bridge always asks and shows API when no plan applies.
-  // OpenAI counts only when signed in with ChatGPT, whose plan usage the Codex app-server reports.
+  // OpenAI Codex counts only when signed in with ChatGPT, whose plan usage the Codex app-server reports.
   function rateLimitSource(ctx: ExtensionContext): "codex" | "claude" | null {
     if (ctx.model?.provider === "claude-bridge") return "claude";
-    return ctx.model?.provider === "openai" &&
+    return ctx.model?.provider === "openai-codex" &&
       Boolean(ctx.modelRegistry?.isUsingOAuth?.(ctx.model)) ? "codex" : null;
   }
 

@@ -287,7 +287,7 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
     assert.match(lines[1], /ctx:42%\(200k\)/);
     assert.doesNotMatch(lines[1], /\(auto\)|42\.0%/);
     assert.match(lines[1], /\+0\s+−0/);
-    assert.match(lines[1], /\(OpenAI\) test-model @high ⚡fast/);
+    assert.match(lines[1], /\(openai\) test-model @high ⚡fast/);
     assert.doesNotMatch(lines[1], /tok\/s/);
     assert.equal(lines.length, 2);
   } finally {
@@ -338,7 +338,7 @@ test('footer uses compact OpenAI model, reasoning, and fast-mode labels', async 
     const ctx = createFakeContext({
       usingSubscription: false,
       model: {
-        provider: 'openai',
+        provider: 'openai-codex',
         id: 'gpt-5.6-sol',
         reasoning: true,
         contextWindow: 272000,
@@ -356,7 +356,7 @@ test('footer uses compact OpenAI model, reasoning, and fast-mode labels', async 
     const lines = footer.render(120);
 
     assert.match(lines[1], /\(OpenAI\) 5\.6 Sol @high ⚡fast/);
-    assert.doesNotMatch(lines[1], /\(openai\)|gpt-5\.6-sol|\(high\)|⚡ fast/);
+    assert.doesNotMatch(lines[1], /openai-codex|gpt-5\.6-sol|\(high\)|⚡ fast/);
     assert.equal(visibleWidth(lines[1]), 120);
     assert.match(stripVTControlCharacters(lines[1]), /⚡fast$/);
   } finally {
@@ -375,7 +375,7 @@ test('footer uses the compact OpenAI Luna model label', async () => {
     const ctx = createFakeContext({
       usingSubscription: false,
       model: {
-        provider: 'openai',
+        provider: 'openai-codex',
         id: 'gpt-5.6-luna',
         reasoning: true,
         contextWindow: 272000,
@@ -393,7 +393,7 @@ test('footer uses the compact OpenAI Luna model label', async () => {
     const lines = footer.render(120);
 
     assert.match(lines[1], /\(OpenAI\) 5\.6 Luna @high ⚡fast/);
-    assert.doesNotMatch(lines[1], /\(openai\)|gpt-5\.6-luna|\(high\)|⚡ fast/);
+    assert.doesNotMatch(lines[1], /openai-codex|gpt-5\.6-luna|\(high\)|⚡ fast/);
     assert.equal(visibleWidth(lines[1]), 120);
     assert.match(stripVTControlCharacters(lines[1]), /⚡fast$/);
   } finally {
@@ -443,7 +443,10 @@ test('footer centers five-hour and weekly ChatGPT subscription usage', async () 
   try {
     const { createFooterExtension } = await freshFooterModule();
     const pi = createFakePi();
-    const ctx = createFakeContext({ usingSubscription: true });
+    const ctx = createFakeContext({
+      usingSubscription: true,
+      model: { provider: 'openai-codex', id: 'gpt-6-astra', reasoning: true, contextWindow: 200000 },
+    });
 
     createFooterExtension({
       readClaudeRateLimits: async () => null,
@@ -809,7 +812,7 @@ test('footer adds a short third line only while subagents are running', async ()
 
     let snapshots = [{
       id: 'sa-1', name: 'turn-delivery-research', status: 'running',
-      model: 'openai/gpt-6-astra', reasoningEffort: 'low',
+      model: 'openai-codex/gpt-6-astra', reasoningEffort: 'low',
     }];
     let notify;
     const disconnect = connectRunningSubagentStatus(pi, {

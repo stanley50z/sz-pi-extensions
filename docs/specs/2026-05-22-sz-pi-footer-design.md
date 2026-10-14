@@ -36,7 +36,7 @@
 - Reprice each Claude Bridge assistant message using its own model's current Anthropic catalog entry from `ctx.modelRegistry.find()` and Pi's `calculateCost()`. Include cached tokens, recalculate resumed history, and clone usage before calculating so rendering never mutates session entries. Keep other providers' reported costs. Show `cost:unavailable` for the whole total if any Bridge model is absent from the catalog rather than displaying a partial sum.
 - Format calculated cost to three significant figures for both subscription and API-key sessions; subscription usage in the center already identifies subscription authentication, so omit `(sub)` from the cost.
 - Display context as `ctx:<percent>%(<capacity>)`, with integer percentage and total context-window capacity formatted to two significant figures in compact units (for example `ctx:34%(1.0M)` or `ctx:34%(270k)`). Hide it while usage is unknown; omit the auto-compaction label.
-- Display provider prefix only when multiple providers are available; map `openai` to `OpenAI`: serves model clarity without wasting width or exposing an implementation-facing provider ID.
+- Display provider prefix only when multiple providers are available; map `openai-codex` to `OpenAI`: serves model clarity without wasting width or exposing an implementation-facing provider ID.
 - Map `gpt-5.6-sol` to `5.6 Sol` and `gpt-5.6-luna` to `5.6 Luna` in the footer while preserving unknown model IDs verbatim.
 - Display reasoning as `@<level>` beside the model: serves compact visibility into the current reasoning mode.
 - Render fast mode as `⚡fast` without an internal gap.
@@ -84,7 +84,7 @@ Responsibilities:
 
 - Start `codex app-server --stdio` and complete its initialize handshake.
 - Request `account/rateLimits/read` without reading or exposing credential files. On `token_expired`, request `account/read` with `refreshToken: true`, then retry the usage read once. Propagate all other errors and failed refresh/retry attempts.
-- Use the separate Codex CLI account even when Pi uses the newer OpenAI subscription login, per the user's 2026-10-08 decision. These are account-wide Codex plan windows, not Pi-specific app quotas. The newer direct OAuth grant does not support quota reporting; see `docs/research/2026-10-08-openai-subscription-usage.md`.
+- Use the separate Codex CLI account, which reports the account-wide Codex plan windows for Pi's `openai-codex` login when both sign into the same account. Pi's newer `openai` Sign in with ChatGPT login is not used because it proved less stable, and its direct OAuth grant does not support quota reporting; see `docs/research/2026-10-08-openai-subscription-usage.md`.
 - Persist credential-safe failure summaries and diagnostic stack traces to the effective Pi agent directory's `logs/codex-rate-limits.log`, excluding raw upstream messages and bodies.
 - Validate and return primary/secondary windows by their reported durations.
 - Apply explicit request timeouts and terminate the child process after each read.
