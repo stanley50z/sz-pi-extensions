@@ -17,6 +17,24 @@ Rules:
 
 const MAX_FIELD_CHARS = 1200;
 const MAX_TITLE_CHARS = 60;
+const RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
+
+// Wait between naming attempts; cancellation releases the timer immediately.
+function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
 
 type CompleteFunction = ExtensionContext["modelRegistry"]["complete"];
 
@@ -91,9 +109,9 @@ function buildNamingPrompt(rounds: ConversationRound[]): string {
     .join("\n\n");
 }
 
-// Generate a title with the active model and its account-specific request endpoint.
+// Generate a title with bounded timed retries using the account-specific endpoint.
 // Bridge requests use its isolated summary path so naming cannot alter the conversation.
-async function generateSessionName(ctx: ExtensionContext, deps?: SessionAutoNameDependencies): Promise<string | null> {
+async function generateSessionName(ctx: ExtensionContext, deps: SessionAutoNameDependencies | undefined, signal: AbortSignal): Promise<string | null> {
   if (!ctx.model) return null;
 
   const rounds = collectAnsweredRounds(ctx);
@@ -112,41 +130,56 @@ async function generateSessionName(ctx: ExtensionContext, deps?: SessionAutoName
     ? { ...ctx.model, baseUrl: auth.baseUrl }
     : ctx.model;
   const complete = deps?.complete ?? ctx.modelRegistry.complete.bind(ctx.modelRegistry);
-  const response = await complete(
-    requestModel,
-    { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-    {
-      apiKey: auth.apiKey,
-      headers: auth.headers,
-      signal: ctx.signal,
-      ...(ctx.model.provider === "claude-bridge" ? { cacheRetention: "none" } : {}),
-    },
-  );
+  for (let attempt = 0; ; attempt += 1) {
+    if (signal.aborted) return null;
+    try {
+      const response = await complete(
+        requestModel,
+        { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
+        {
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+          signal,
+          ...(ctx.model.provider === "claude-bridge" ? { cacheRetention: "none" } : {}),
+        },
+      );
 
-  if (response.stopReason === "aborted") return null;
-  if (response.stopReason === "error") {
-    throw new Error(response.errorMessage || "Session naming request failed");
+      if (signal.aborted || response.stopReason === "aborted") return null;
+      if (response.stopReason === "error") {
+        throw new Error(response.errorMessage || "Session naming request failed");
+      }
+
+      const responseText = response.content
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+
+      return sanitizeTitle(responseText);
+    } catch (error) {
+      if (signal.aborted) return null;
+      const retryDelay = RETRY_DELAYS_MS[attempt];
+      if (retryDelay === undefined) throw error;
+      await waitForRetry(retryDelay, signal);
+    }
   }
-
-  const responseText = response.content
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
-
-  return sanitizeTitle(responseText);
 }
 
 // Install automatic and manual naming using the session's registered providers.
 export function createSessionAutoNameExtension(deps?: SessionAutoNameDependencies) {
   return function sessionAutoName(pi: ExtensionAPI) {
-    let namingInFlight = false;
+    let namingController: AbortController | undefined;
 
     async function runNaming(ctx: ExtensionContext, options: { skipExisting: boolean; notify: boolean }) {
-      if (namingInFlight || (options.skipExisting && pi.getSessionName())) return;
+      if (namingController || (options.skipExisting && pi.getSessionName())) return;
 
-      namingInFlight = true;
+      const controller = new AbortController();
+      namingController = controller;
+      const signal = ctx.signal
+        ? AbortSignal.any([ctx.signal, controller.signal])
+        : controller.signal;
       try {
-        const title = await generateSessionName(ctx, deps);
+        const title = await generateSessionName(ctx, deps, signal);
+        if (signal.aborted) return;
         if (!title) {
           if (options.notify) ctx.ui.notify("Could not generate a session name yet", "warning");
           return;
@@ -155,11 +188,18 @@ export function createSessionAutoNameExtension(deps?: SessionAutoNameDependencie
         pi.setSessionName(title);
         if (options.notify) ctx.ui.notify(`Session name set: ${title}`, "info");
       } finally {
-        namingInFlight = false;
+        if (namingController === controller) namingController = undefined;
       }
     }
 
+    pi.on("session_shutdown", () => {
+      namingController?.abort();
+      namingController = undefined;
+    });
+
     pi.on("session_start", (_event, ctx) => {
+      namingController?.abort();
+      namingController = undefined;
       if (ctx.mode !== "tui") return;
 
       const previousFactory = ctx.ui.getEditorComponent();
