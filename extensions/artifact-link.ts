@@ -3,6 +3,7 @@ import { appendFile, mkdir, open, stat } from "node:fs/promises";
 import { request } from "node:http";
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { hyperlink, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const REMOTE_GUIDELINE = "The artifact preview service is active. Put user-facing previews/reports and their relative assets in the current project's data/previews or .pi/artifacts. Call artifact_link before handing off each file and use its HTTP URL, including before ask_user. For this workflow these browser URLs replace local paths and file:/// handoff links. Do not expose the project or home directory.";
@@ -96,12 +97,13 @@ export function createArtifactLinkExtension(agentDir: string) {
         event.systemPromptOptions.promptGuidelines.push(REMOTE_GUIDELINE);
       }
     });
-    pi.registerTool({
+    const parameters = Type.Object({ path: Type.String({ description: "Existing artifact file, absolute or relative to the current working directory" }) });
+    pi.registerTool<typeof parameters, { url: string }>({
       name: "artifact_link",
       label: "Artifact link",
       description: "Publish a preview/report file from the current project's data/previews or .pi/artifacts and return a browser URL usable over the SSH preview tunnel. Relative images/CSS in that preview directory are served too. Requires scripts/artifact-preview/start.py on the remote host; the clipboard-enabled SSH launcher starts it automatically. Other files must first be placed in a designated preview directory.",
       promptSnippet: "Return a browser link for a remote preview or report",
-      parameters: Type.Object({ path: Type.String({ description: "Existing artifact file, absolute or relative to the current working directory" }) }),
+      parameters,
       outputSchema: Type.Object({ url: Type.String() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -125,6 +127,13 @@ export function createArtifactLinkExtension(agentDir: string) {
             `${new Date().toISOString()} ${error instanceof Error ? error.stack : String(error)}\n`, { mode: 0o600 });
           throw error;
         }
+      },
+      // Attach the full destination before Text wraps it; keep ANSI out of model-facing results.
+      renderResult(result, _options, theme, context) {
+        const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+        const url = result.details?.url;
+        // SSH may hide terminal capabilities. The visible URL remains usable without OSC 8 support.
+        return new Text(theme.fg("toolOutput", !context.isError && url ? hyperlink(text, url) : text), 0, 0);
       },
     });
   };

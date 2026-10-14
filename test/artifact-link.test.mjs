@@ -7,6 +7,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { initTheme } from '@earendil-works/pi-coding-agent';
+import { getOsc8LinkAtColumn, stripTerminalSequences } from '@earendil-works/pi-tui';
+import { ToolExecutionComponent } from '../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js';
 import { createArtifactLinkExtension } from '../extensions/artifact-link.ts';
 
 const exec = promisify(execFile);
@@ -45,6 +48,40 @@ test('artifact_link returns a usable encoded browser link for the current projec
   assert.match(result.structuredContent.url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{64}\/%E6%96%B9%E6%A1%88%20one\.html$/);
   assert.ok(result.content[0].text.includes(result.structuredContent.url));
   assert.equal(await (await fetch(result.structuredContent.url)).text(), '<h1>Remote preview</h1>');
+});
+
+test('wrapped artifact links keep the full browser destination on every URL character', async (t) => {
+  const { tool, cwd } = await setup(t);
+  const args = { path: 'data/previews/方案 one.html' };
+  const result = await tool.execute('wrapped-link', args, undefined, undefined, { cwd });
+  const url = result.structuredContent.url;
+  assert.equal(result.content[0].text, url, 'model-facing content stays plain text');
+  initTheme(undefined, false);
+  const row = new ToolExecutionComponent('artifact_link', 'wrapped-link', args,
+    { showImages: false }, tool, { requestRender() {} }, cwd);
+  row.updateResult(result);
+  for (const expanded of [false, true]) {
+    row.setExpanded(expanded);
+    for (const width of [40, 100, 160]) {
+      const lines = row.render(width);
+      const start = lines.findIndex((line) => stripTerminalSequences(line).trimStart().startsWith('http://'));
+      assert.ok(start >= 0, 'the URL remains visible');
+      let displayed = '';
+      for (const line of lines.slice(start)) {
+        if (displayed.length >= url.length) break;
+        const plain = stripTerminalSequences(line);
+        const segment = plain.trim();
+        const offset = plain.indexOf(segment);
+        for (let column = offset; column < offset + segment.length; column++) {
+          assert.equal(getOsc8LinkAtColumn(line, column), url,
+            `full destination at width ${width}, expanded=${expanded}, column ${column}`);
+        }
+        displayed += segment;
+      }
+      assert.equal(displayed, url);
+    }
+  }
+  assert.equal(await (await fetch(url)).text(), '<h1>Remote preview</h1>');
 });
 
 test('active service instructs existing Herdr sessions to hand off HTTP links before asking', async (t) => {
@@ -88,4 +125,11 @@ test('missing service does not alter ordinary sessions and fails with setup guid
   assert.deepEqual(event.systemPromptOptions.promptGuidelines, ['Unchanged']);
   await assert.rejects(tool.execute('no-service', { path: 'data/previews/report.html' }, new AbortController().signal, undefined, { cwd: agentDir }), /Reconnect with scripts\/ssh-clipboard\/ssh.py/);
   assert.match(await readFile(join(agentDir, 'logs', 'artifact-link.log'), 'utf8'), /Error: Artifact preview service is not running/);
+  initTheme(undefined, false);
+  const row = new ToolExecutionComponent('artifact_link', 'no-service', { path: 'data/previews/report.html' },
+    { showImages: false }, tool, { requestRender() {} }, agentDir);
+  row.updateResult({ content: [{ type: 'text', text: 'Artifact preview service is not running' }], details: undefined, isError: true });
+  const lines = row.render(100);
+  assert.ok(lines.some((line) => stripTerminalSequences(line).includes('Artifact preview service is not running')));
+  assert.ok(lines.every((line) => !line.includes('\x1b]8;')), 'errors remain ordinary text');
 });

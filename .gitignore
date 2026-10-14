@@ -1,6 +1,7 @@
 node_modules/
 .worktrees/
 .superpowers/
+.pi/
 .env
 .DS_Store
 /openwiki/

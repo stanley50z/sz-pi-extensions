@@ -46,6 +46,8 @@ http://127.0.0.1:43136/<random-directory-capability>/douyin-navigation-options.h
 
 Use that HTTP URL in the final response or before asking the user to choose a preview. When the service is active, the extension adds these instructions at each agent turn, overriding local-file handoff conventions for this workflow. Pi does not rewrite old messages; ask it to relink an existing preview.
 
+The tool result displays the full URL with an explicit OSC 8 terminal hyperlink. Wrapped segments keep the complete destination instead of relying on line-by-line URL detection. Run `/reload` after updating the extension, then call `artifact_link` again. The terminal and any multiplexer must forward OSC 8 links; otherwise copy the complete URL, including wrapped lines. Model-facing text and structured results remain plain URLs.
+
 Publication makes the designated preview directory available, including its relative assets. It does not copy files or expose the rest of the project. Assets outside that directory must be moved into it and their references updated. Relative links must stay within the published directory; absolute paths such as `/assets/image.png` are not remapped.
 
 Links survive an SSH disconnect/reconnect and repeated `start.py` calls while the shared service stays running. Stopping/restarting the service revokes old links; call `artifact_link` again.
