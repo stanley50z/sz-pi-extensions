@@ -10,6 +10,7 @@
 - Align the right-hand status sections with the editor divider's right edge, with no trailing footer padding: this supersedes the earlier request for padding after token speed.
 - Keep token speed visible after generation completes: explicitly requested as “the token speed should stay on and retain the last value when the generation is done, instead of disappearing.”
 - Preserve the default-style usage/cost/context/model footer information: requested by comparing against pi's default footer and asking for similar richer footer behavior.
+- If the full second line does not fit, hide all `R`, `W`, `CR`, and `CW` counters first, keeping cost and context usage on the left. Restore counters when the terminal is wide enough.
 - Show git diff stats centered in the footer. Clicking the totals expands the footer downward with per-file added and deleted line counts.
 - Show at most five files, ordered by total lines changed, when more than five files have changes.
 - Keep the Git Diff Viewer inside Pi's TUI and do not start a localhost web server.
@@ -41,7 +42,7 @@
 - Display reasoning as `@<level>` beside the model: serves compact visibility into the current reasoning mode.
 - Render fast mode as `⚡fast` without an internal gap.
 - Sanitize extension status text to one line: serves footer stability by preventing status newlines, tabs, or excess spaces from breaking layout.
-- Center git diff stats and ChatGPT subscription usage when there is enough room, otherwise omit the centered segment and preserve left/right stats: serves layout robustness under narrow widths.
+- Center git diff stats and ChatGPT subscription usage when there is enough room. Before omitting the centered segment or truncating the right side, remove the token counters from the left. If the compact line still does not fit, retain the existing centered-segment omission and final width truncation.
 - Format subscription usage as `5h:<percent> wk:<percent>`; use `—` when Codex does not provide a window, `…` while loading, and `!` when retrieval fails. For API-key authentication, place `API` in the same centered slot instead.
 - Read limits from Codex app-server's `account/rateLimits/read` method on session start, model selection, and completed turns: serves current ChatGPT subscription usage without exposing credentials.
 - Underline the centered diff totals so they read as interactive, handle left-clicks in fullscreen mode, and append compact file rows below the normal footer lines.

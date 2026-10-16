@@ -571,12 +571,13 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
           }
 
           // ── line 2 left: original stats plus context usage ─────────
-          const statsParts: string[] = [];
-          if (input) statsParts.push(`R${formatTokens(input)}`);
-          if (output) statsParts.push(`W${formatTokens(output)}`);
-          if (cacheRead) statsParts.push(`CR${formatTokens(cacheRead)}`);
-          if (cacheWrite) statsParts.push(`CW${formatTokens(cacheWrite)}`);
+          const tokenParts: string[] = [];
+          if (input) tokenParts.push(`R${formatTokens(input)}`);
+          if (output) tokenParts.push(`W${formatTokens(output)}`);
+          if (cacheRead) tokenParts.push(`CR${formatTokens(cacheRead)}`);
+          if (cacheWrite) tokenParts.push(`CW${formatTokens(cacheWrite)}`);
 
+          const statsParts: string[] = [];
           const usingSubscription = ctx.model ? ctx.modelRegistry?.isUsingOAuth?.(ctx.model) : false;
           statsParts.push(costAvailable ? `$${formatCost(cost)}` : "cost:unavailable");
 
@@ -585,7 +586,7 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
             statsParts.push(`ctx:${Math.round(contextUsage.percent)}%(${formatContextWindow(contextUsage.contextWindow)})`);
           }
 
-          let left = theme.fg("dim", statsParts.join(" "));
+          let left = theme.fg("dim", [...tokenParts, ...statsParts].join(" "));
 
           // ── line 2 right: provider, model, reasoning, speed ────────
           const providerCount = footerData.getAvailableProviderCount?.() ?? 1;
@@ -633,9 +634,14 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
           const centre = centreParts.join("  ");
 
           // ── line 2 layout: stats | centred diff | right side ───────
-          const leftW = visibleWidth(left);
           const centreW = visibleWidth(centre);
           const rightW = visibleWidth(right);
+          // Drop token counters before sacrificing the centre or truncating the model.
+          const requiredGap = centre ? centreW + 3 : 2;
+          if (visibleWidth(left) + requiredGap + rightW > width) {
+            left = theme.fg("dim", statsParts.join(" "));
+          }
+          const leftW = visibleWidth(left);
           let statsLine: string;
 
           if (centre) {

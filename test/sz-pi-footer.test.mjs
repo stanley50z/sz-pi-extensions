@@ -296,6 +296,69 @@ test('footer preserves original lines and adds custom stats/statuses', async () 
   }
 });
 
+test('footer hides token counters before dropping second-line information and restores them on resize', async (t) => {
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({
+    usingSubscription: true,
+    model: { provider: 'openai-codex', id: 'gpt-6-astra' },
+    contextUsage: { tokens: 370000, contextWindow: 1000000, percent: 37 },
+    branch: [{ type: 'message', message: { role: 'assistant', usage: {
+      input: 974, output: 182000, cacheRead: 112000000, cacheWrite: 1200000,
+      cost: { total: 32.3 },
+    } } }],
+  });
+  createFooterExtension({
+    readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+  })(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  pi.events.emit('sz-git-view:update', { summary: { added: 23, deleted: 5, files: [] } });
+  pi.events.emit('sz-codex-rate-limits:update', { windows: [
+    { usedPercent: 16, windowDurationMins: 300 },
+    { usedPercent: 31, windowDurationMins: 10080 },
+  ] });
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, createFooterData(null, new Map(), 2));
+
+  // Full content needs 95 columns, including the existing layout's minimum gaps.
+  const compact = footer.render(94)[1];
+  assert.match(compact, /^\$32\.3 ctx:37%\(1\.0M\)\s+\+23  −5  5h:16% wk:31%\s+\(OpenAI\) gpt-6-astra @high$/);
+  assert.doesNotMatch(compact, /\b(?:R|W|CR|CW)\d/);
+  assert.equal(visibleWidth(compact), 94);
+
+  const full = footer.render(95)[1];
+  assert.match(full, /^R974 W182k CR112M CW1\.2M \$32\.3 ctx:37%\(1\.0M\)\s+\+23  −5  5h:16% wk:31%\s+\(OpenAI\) gpt-6-astra @high$/);
+  assert.equal(visibleWidth(full), 95);
+  assert.match(footer.render(69)[1], /^\$32\.3 ctx:37%\(1\.0M\)\s+\(OpenAI\) gpt-6-astra @high$/);
+});
+
+test('footer measures styled wide characters when collapsing counters without a centre segment', async (t) => {
+  const { default: install } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({
+    usingSubscription: true,
+    model: { provider: 'openai', id: '模型-test' },
+    branch: [{ type: 'message', message: { role: 'assistant', usage: {
+      input: 1200, output: 800, cacheRead: 300, cacheWrite: 40,
+      cost: { total: 0.123 },
+    } } }],
+  });
+  install(pi);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  await pi.handlers.get('session_start')({}, ctx);
+  pi.events.emit('sz-git-view:update', { summary: null });
+  const theme = { ...plainTheme, fg: (_color, text) => `\x1b[2m${text}\x1b[0m` };
+  const footer = ctx.footerFactory({ requestRender() {} }, theme, footerData);
+  for (const width of [58, 59, 58]) {
+    const line = footer.render(width)[1];
+    const plain = stripVTControlCharacters(line);
+    assert.match(plain, /\$0\.123 ctx:42%\(200k\)\s+模型-test @high$/);
+    if (width === 59) assert.match(plain, /^R1\.2k W800 CR300 CW40 /);
+    else assert.match(plain, /^\$0\.123 /);
+    assert.equal(visibleWidth(line), width);
+  }
+});
+
 test('footer appends the context window with two significant figures', async (t) => {
   const { default: install } = await freshFooterModule();
   const pi = createFakePi();
