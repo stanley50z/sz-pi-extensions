@@ -14,6 +14,7 @@ export interface ClaudeRateLimits extends CodexRateLimits {
  * Reads the Claude plan's five-hour, weekly, and Fable allowance usage behind Claude Code's `/usage`
  * command, through a short-lived Claude Code process that never starts a turn. Resolves to null
  * when plan limits do not apply, such as API-key, Bedrock, or Vertex authentication.
+ * Rejects when a plan applies but Claude Code cannot retrieve its usage.
  */
 export async function readClaudeRateLimits(
   options: ReadClaudeRateLimitsOptions = {},
@@ -27,8 +28,15 @@ export async function readClaudeRateLimits(
     options: {
       settingSources: [],
       persistSession: false,
-      // A usage read has no reason to connect the account's claude.ai MCP servers.
-      env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0" },
+      // Claude Code classifies usage reads as nonessential traffic. Allow this explicit
+      // request only in its child process, while keeping telemetry, error reports, and MCP off.
+      env: {
+        ...process.env,
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "",
+        DISABLE_TELEMETRY: "1",
+        DISABLE_ERROR_REPORTING: "1",
+        ENABLE_CLAUDEAI_MCP_SERVERS: "0",
+      },
     },
   });
 
@@ -42,7 +50,8 @@ export async function readClaudeRateLimits(
         );
       }),
     ]);
-    if (!usage.rate_limits_available || !usage.rate_limits) return null;
+    if (!usage.rate_limits_available) return null;
+    if (!usage.rate_limits) throw new Error("Claude Code subscription usage data is unavailable");
 
     const windows: CodexRateLimitWindow[] = [];
     for (const [window, windowDurationMins] of [

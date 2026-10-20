@@ -40,6 +40,36 @@ test('reads five-hour and weekly plan usage from the Claude Code usage request',
   assert.equal(calls.closed, true);
 });
 
+test('reads subscription usage even when the parent disables nonessential traffic', async () => {
+  const previous = process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+  process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  let childEnv;
+  const { query: respond } = fakeQuery(Promise.resolve({
+    subscription_type: 'max',
+    rate_limits_available: true,
+    rate_limits: { five_hour: { utilization: 23 }, seven_day: { utilization: 11 } },
+  }));
+  const { query: blocked } = fakeQuery(Promise.resolve({
+    subscription_type: 'max', rate_limits_available: true, rate_limits: null,
+  }));
+  try {
+    const result = await readClaudeRateLimits({ query: (args) => {
+      childEnv = args.options.env;
+      return childEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ? blocked() : respond();
+    } });
+    assert.deepEqual(result, { windows: [
+      { usedPercent: 23, windowDurationMins: 300 },
+      { usedPercent: 11, windowDurationMins: 10080 },
+    ] });
+    assert.equal(childEnv.DISABLE_TELEMETRY, '1');
+    assert.equal(childEnv.DISABLE_ERROR_REPORTING, '1');
+    assert.equal(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, '1');
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+    else process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = previous;
+  }
+});
+
 test('reads Fable allowance separately from the overall weekly usage', async () => {
   const { query } = fakeQuery(Promise.resolve({
     rate_limits_available: true,
@@ -81,6 +111,15 @@ test('resolves to null when Claude Code is not billed through a plan', async () 
   }));
 
   assert.equal(await readClaudeRateLimits({ query }), null);
+  assert.equal(calls.closed, true);
+});
+
+test('reports missing subscription data as a failed read, not API billing', async () => {
+  const { query, calls } = fakeQuery(Promise.resolve({
+    subscription_type: 'max', rate_limits_available: true, rate_limits: null,
+  }));
+
+  await assert.rejects(readClaudeRateLimits({ query }), /subscription usage data is unavailable/);
   assert.equal(calls.closed, true);
 });
 
