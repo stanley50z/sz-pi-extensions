@@ -1395,6 +1395,42 @@ test('fullscreen terminal mouse sequences activate the Ctrl GitHub link using th
   }, null, 2), 'utf8');
 });
 
+test('Ctrl held in another app leaves the fullscreen footer on the local folder until focus returns', async (t) => {
+  const repo = resolve(fileURLToPath(new URL('../', import.meta.url)));
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({ cwd: repo });
+  createFooterExtension({ readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+    isCtrlPressed: () => true })(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  let input;
+  const terminal = {
+    columns: 100, rows: 5, kittyProtocolActive: false,
+    start(onInput) { input = onInput; }, stop() {}, write() {},
+    hideCursor() {}, showCursor() {}, moveBy() {}, clearLine() {},
+    clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {},
+  };
+  const tui = new TuiAltScreen(terminal, false, undefined, { mouse: true });
+  const footer = ctx.footerFactory(tui, plainTheme, footerData);
+  t.after(() => footer.dispose());
+  tui.setLayoutRoot(footer);
+  tui.start();
+  t.after(() => tui.stop());
+  const showsGitHub = () => tui.getScreenLines().join('').includes('@stanley50z/sz-pi-extensions');
+  const deadline = Date.now() + 3000;
+  while (!showsGitHub() && Date.now() < deadline) await delay(25);
+  assert.ok(showsGitHub(), 'focused terminal follows Ctrl');
+  input('\x1b[O');
+  await delay(100);
+  assert.ok(!showsGitHub(), 'unfocused terminal ignores Ctrl held in another app');
+  input('\x1b[I');
+  await delay(100);
+  assert.ok(showsGitHub(), 'regaining focus follows Ctrl again');
+  footer.dispose();
+  assert.ok(!Object.hasOwn(tui, 'handleViewportInput'), 'dispose restores the viewport input handler');
+});
+
 test('clicking the cwd path opens the session folder in the file manager', async (t) => {
   const child = new EventEmitter();
   child.unref = t.mock.fn();

@@ -503,6 +503,8 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
       const isCtrlPressed = deps.isCtrlPressed ?? (readModifier
         ? () => readModifier("control") : undefined);
       let ctrlHeld = false;
+      // The OS reports Ctrl from any app, so only honor it while the terminal has focus.
+      let terminalFocused = true;
       let repository: GitHubRepository | null = null;
       let repositoryCwd: string | undefined;
       let disposed = false;
@@ -518,16 +520,22 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
             `${new Date().toISOString()} ${report.stack}\n${error instanceof Error ? error.stack : String(error)}\n`, "utf8");
         })().catch((loggingError: unknown) => console.error("Could not persist footer error", loggingError));
       };
+      // Pi's fullscreen viewport consumes focus reports before extension input listeners
+      // run, so this instance's private handler is wrapped to observe them.
+      const viewport = tui as unknown as { handleViewportInput?: (data: string) => unknown };
+      const handleViewportInput = viewport.handleViewportInput;
+      let observeFocus: typeof handleViewportInput;
       const stop = () => {
         disposed = true;
         clearInterval(timer);
         originRead?.abort();
+        if (observeFocus && viewport.handleViewportInput === observeFocus) delete viewport.handleViewportInput;
       };
       stopLocationPolling = stop;
       const pollLocation = () => {
         if (!isCtrlPressed) return;
         try {
-          const held = isCtrlPressed();
+          const held = terminalFocused && isCtrlPressed();
           if (held !== ctrlHeld) {
             ctrlHeld = held;
             renderFooter();
@@ -554,6 +562,16 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
           reportLocationError(error);
         }
       };
+      if (isCtrlPressed && typeof handleViewportInput === "function") {
+        observeFocus = (data) => {
+          if (data === "\x1b[I" || data === "\x1b[O") {
+            terminalFocused = data === "\x1b[I";
+            pollLocation();
+          }
+          return handleViewportInput.call(tui, data);
+        };
+        viewport.handleViewportInput = observeFocus;
+      }
       if (isCtrlPressed) {
         timer = setInterval(pollLocation, 50);
         timer.unref();
