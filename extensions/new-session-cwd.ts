@@ -1,8 +1,10 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
+  buildSessionProjection,
   DynamicBorder,
+  getAgentDir,
   SessionManager,
   type ExtensionAPI,
   type ExtensionContext,
@@ -10,6 +12,7 @@ import {
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
 const INTERNAL_SWITCH_COMMAND = "new-cwd-switch";
+const INHERITED_MODEL_ENTRY = "neww-inherit-model";
 
 interface RecentSession {
   cwd: string;
@@ -102,25 +105,59 @@ function hasTui(ctx: ExtensionContext): boolean {
   return mode === undefined ? ctx.hasUI : mode === "tui";
 }
 
-// Adds the /new cwd selector and /neww to use the native current-cwd flow directly.
+// Adds the /new cwd selector and /neww to retain the current cwd, model and reasoning.
 export function createNewSessionCwdExtension(deps: NewSessionCwdDependencies) {
   return function newSessionCwdExtension(pi: ExtensionAPI) {
     let pendingCwd: string | undefined;
     let skipCwdSelector = false;
 
     pi.registerCommand("neww", {
-      description: "Start a new session in the current cwd without the directory selector",
+      description: "Start a new session with the current cwd, model and reasoning",
       handler: async (_args, ctx) => {
+        const model = ctx.model && { provider: ctx.model.provider, id: ctx.model.id };
+        const thinkingLevel = pi.getThinkingLevel();
         skipCwdSelector = true;
         try {
-          await ctx.newSession();
+          await ctx.newSession({
+            setup: async (sessionManager) => {
+              if (model) sessionManager.appendModelChange(model.provider, model.id);
+              sessionManager.appendThinkingLevelChange(thinkingLevel);
+              sessionManager.appendCustomEntry(INHERITED_MODEL_ENTRY);
+            },
+          });
         } finally {
           skipCwdSelector = false;
         }
       },
     });
 
-    pi.on("session_start", (_event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
+      // /new replaces the extension runtime. Restore through this fresh Pi handle,
+      // after setup has seeded canonical settings in the replacement session.
+      const branch = event.reason === "new" ? ctx.sessionManager.getBranch() : [];
+      const inheritedIndex = branch.findLastIndex((entry) =>
+        entry.type === "custom" && entry.customType === INHERITED_MODEL_ENTRY);
+      if (inheritedIndex !== -1) {
+        try {
+          // Ignore entries appended by earlier startup hooks when reading the snapshot.
+          const saved = buildSessionProjection(branch.slice(0, inheritedIndex + 1));
+          if (saved.model) {
+            const model = ctx.modelRegistry.find(saved.model.provider, saved.model.modelId);
+            if (!model || !await pi.setModel(model)) {
+              throw new Error(`Could not retain /neww model ${saved.model.provider}/${saved.model.modelId}`);
+            }
+          }
+          const thinkingLevel = (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const)
+            .find((level) => level === saved.thinkingLevel);
+          if (!thinkingLevel) throw new Error(`Invalid /neww reasoning level: ${saved.thinkingLevel}`);
+          pi.setThinkingLevel(thinkingLevel);
+        } catch (error) {
+          const logPath = join(getAgentDir(), "logs", "new-session-cwd.log");
+          mkdirSync(dirname(logPath), { recursive: true });
+          appendFileSync(logPath, `${new Date().toISOString()} ${error instanceof Error ? error.stack : String(error)}\n`, "utf8");
+          throw error;
+        }
+      }
       if (!hasTui(ctx)) return;
 
       ctx.ui.addAutocompleteProvider((current) => ({

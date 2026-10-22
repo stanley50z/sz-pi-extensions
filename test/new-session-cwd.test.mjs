@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -19,6 +20,9 @@ function createFakePi() {
     commands,
     handlers,
     sentUserMessages,
+    getThinkingLevel() {
+      return "high";
+    },
     registerCommand(name, command) {
       commands.set(name, command);
     },
@@ -90,6 +94,39 @@ test("/neww starts a native new session without listing directories or opening t
   await command.handler("", ctx);
   assert.equal(started, true);
   assert.deepEqual(pi.sentUserMessages, []);
+});
+
+test("/neww reports a replacement model auth failure with a persistent stack report", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-neww-auth-failure-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = directory;
+  try {
+    const { default: install } = await loadExtension();
+    const pi = createFakePi();
+    install(pi);
+    const sessionManager = SessionManager.inMemory(process.cwd());
+    const model = { provider: "test-provider", id: "active-model" };
+    await pi.commands.get("neww").handler("", {
+      model,
+      async newSession(options) {
+        await options.setup(sessionManager);
+        return { cancelled: false };
+      },
+    });
+    const replacementPi = createFakePi();
+    replacementPi.setModel = async () => false;
+    replacementPi.setThinkingLevel = () => assert.fail("reasoning must not be applied after model auth fails");
+    install(replacementPi);
+    await assert.rejects(replacementPi.handlers.get("session_start")({ reason: "new" }, {
+      sessionManager, modelRegistry: { find: () => model },
+    }), /Could not retain \/neww model test-provider\/active-model/);
+    const report = readFileSync(join(directory, "logs", "new-session-cwd.log"), "utf8");
+    assert.match(report, /Error: Could not retain \/neww model test-provider\/active-model\n\s+at /);
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 for (const outcome of ["cancelled", "error"]) {
