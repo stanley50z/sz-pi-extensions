@@ -4,6 +4,7 @@
 
 - Show the current working directory on the footer's first line: requested during the footer layout discussion.
 - Show the git branch next to the working directory when available: requested as part of the customized footer layout and inherited from the previous footer behavior.
+- In local Windows/macOS sessions, holding Ctrl changes the clickable cwd to `@owner/repo` from its GitHub origin. Ctrl-click opens that repository; releasing Ctrl restores the folder path. Plain clicks still open the folder. Ctrl supersedes the initial Shift choice because Windows Terminal reserves Shift-click for text selection; see issue #9.
 - Show the explicit pi session name in the middle of the footer's first line when set: requested when investigating why the session name was not visible after resume, then refined to place the session name in the center.
 - Keep the session name geometrically centered when space permits; a long cwd or branch may push it right toward the fixed-width token-speed segment.
 - Show token speed on the first line, including before the first prompt is sent: requested as part of moving speed out of the stats/model line, then refined to show `0 tok/s` when initiating a session.
@@ -25,6 +26,7 @@
 - Use a two-line footer: serves the requirements to show path/session/speed plus usage/model/diff details without overcrowding one line. Line 1 contains location/session/speed; line 2 contains usage, diff, model, reasoning, and statuses.
 - Use `ctx.sessionManager.getCwd()` when available and fall back to `ctx.cwd`: serves accurate resumed-session display because session cwd can differ from process cwd.
 - Compact the home directory to `~`: serves readable cwd display and matches pi footer conventions.
+- Poll Pi's native Control-key state every 50 ms while mounted, without spawning a key-detection process. Read Git origin asynchronously once per session cwd with a three-second timeout; accept only HTTPS and SSH GitHub repository URLs. No GitHub origin leaves the local folder link unchanged. Disable native key polling through SSH and on platforms without Pi's native helper. Abort pending reads and stop polling on footer replacement, disposal, and session shutdown. Persist link failures and stack traces to the effective agent directory's `logs/footer-location.log` and notify the user.
 - Append branch as `(<branch>)` after cwd only while the Git Diff Viewer supplies a non-null repository summary. Pi reads `.git/HEAD` directly and can return a branch from incomplete metadata that Git rejects; use the collector's repository check for both branch and diff visibility.
 - Start the session name at the geometric center when that does not overlap cwd/branch or token speed; otherwise clamp it between those segments, allowing a long location to push it right.
 - Treat pi “session name” as only the explicit `/name` or `pi.setSessionName()` value: serves correctness with pi's session model; `/resume` fallback previews are not shown as names.

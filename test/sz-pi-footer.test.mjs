@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import childProcess, { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { fileURLToPath } from 'node:url';
+import { TuiAltScreen, visibleWidth } from '@earendil-works/pi-tui';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { connectRunningSubagentStatus } from '../lib/subagent-tool-output.ts';
@@ -1121,6 +1122,277 @@ test('clicking Git diff totals expands the five most changed files and clicking 
   });
   assert.equal(footer.render(120).length, 2);
   assert.equal(renderRequests, 2);
+});
+
+test('holding Ctrl swaps the footer location to its GitHub origin and release restores the folder', async (t) => {
+  const repo = await createCleanRepo();
+  git(['remote', 'add', 'origin', 'git@github.com:stanley50z/sz-pi-extensions.git'], repo);
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  let ctrl = false;
+  let renders = 0;
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const spawn = t.mock.method(childProcess, 'spawn', () => child);
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({ cwd: repo, sessionName: 'my-session' });
+  createFooterExtension({
+    readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+    isCtrlPressed: () => ctrl,
+  })(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  pi.events.emit('sz-git-view:update', { summary: { added: 0, deleted: 0, files: [] } });
+  const footer = ctx.footerFactory({ requestRender() { renders++; } }, plainTheme, createFooterData('main'));
+  t.after(() => footer.dispose());
+  const localPath = repo.replace(process.env.HOME || process.env.USERPROFILE, '~');
+  assert.ok(footer.render(120)[0].startsWith(localPath));
+  ctrl = true;
+  const deadline = Date.now() + 3000;
+  while (!footer.render(120)[0].startsWith('@stanley50z/sz-pi-extensions') && Date.now() < deadline) await delay(25);
+  assert.match(footer.render(120)[0], /^@stanley50z\/sz-pi-extensions \(main\)\s+my-session\s+0 tok\/s$/);
+  assert.ok(renders > 0, 'idle Ctrl transitions request a repaint');
+  const click = (x = 0, extra = {}) => footer.handleMouse({
+    type: 'click', button: 'left', x, y: 0, screenX: x, screenY: 0, width: 120, height: 2,
+    shift: false, alt: false, ctrl: true, ...extra,
+  });
+  assert.equal(click(footer.render(120)[0].indexOf('(main)')), undefined, 'branch is not clickable');
+  assert.deepEqual(click(), { handled: true, render: false });
+  assert.deepEqual(spawn.mock.calls.at(-1).arguments[1], ['https://github.com/stanley50z/sz-pi-extensions']);
+  ctrl = false;
+  await delay(100);
+  assert.ok(footer.render(120)[0].startsWith(localPath));
+  click(0, { ctrl: false });
+  assert.deepEqual(spawn.mock.calls.at(-1).arguments[1], [repo]);
+  footer.dispose();
+  const stopped = renders;
+  ctrl = true;
+  await delay(100);
+  assert.equal(renders, stopped, 'disposed footer stops polling');
+});
+
+for (const [origin, label] of [
+  ['https://github.com/another-owner/another-repo.git', '@another-owner/another-repo'],
+  ['ssh://git@github.com/another-owner/another-repo.git', '@another-owner/another-repo'],
+  ['https://github.com/another-owner/another-repo/', '@another-owner/another-repo'],
+  ['https://gitlab.com/another-owner/another-repo.git', null],
+  ['https://github.com.evil.example/another-owner/another-repo.git', null],
+  ['https://github.com/another-owner/../', null],
+  [null, null],
+]) {
+  test(`Ctrl footer resolves only a GitHub repository origin: ${origin}`, async (t) => {
+    const repo = await createCleanRepo();
+    if (origin) git(['remote', 'add', 'origin', origin], repo);
+    t.after(() => rm(repo, { recursive: true, force: true }));
+    const { createFooterExtension } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext({ cwd: repo });
+    createFooterExtension({ readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+      isCtrlPressed: () => true })(pi);
+    await pi.handlers.get('session_start')({}, ctx);
+    t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+    let renders = 0;
+    const footer = ctx.footerFactory({ requestRender() { renders++; } }, plainTheme, footerData);
+    t.after(() => footer.dispose());
+    const deadline = Date.now() + 3000;
+    while (renders < 2 && Date.now() < deadline) await delay(25);
+    assert.ok(renders >= 2, 'origin lookup completed');
+    const line = footer.render(120)[0];
+    assert.ok(line.startsWith(label ?? repo.replace(process.env.HOME || process.env.USERPROFILE, '~')), line);
+    for (const width of [20, 40, 80]) assert.ok(visibleWidth(footer.render(width)[0]) <= width);
+  });
+}
+
+test('Ctrl footer follows session cwd changes and stops polling on replacement and shutdown', async (t) => {
+  const repo = await createCleanRepo();
+  const other = await createCleanRepo();
+  git(['remote', 'add', 'origin', 'https://github.com/stanley50z/sz-pi-extensions.git'], repo);
+  git(['remote', 'add', 'origin', 'https://github.com/another-owner/another-repo.git'], other);
+  t.after(() => Promise.all([rm(repo, { recursive: true, force: true }), rm(other, { recursive: true, force: true })]));
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({ cwd: repo });
+  let cwd = repo;
+  let reads = 0;
+  ctx.sessionManager.getCwd = () => cwd;
+  createFooterExtension({ readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+    isCtrlPressed: () => { reads++; return true; } })(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  t.after(() => footer.dispose());
+  await delay(100);
+  cwd = other;
+  const deadline = Date.now() + 3000;
+  while (!footer.render(120)[0].startsWith('@another-owner/another-repo') && Date.now() < deadline) await delay(25);
+  assert.ok(footer.render(120)[0].startsWith('@another-owner/another-repo'));
+  await pi.handlers.get('thinking_level_select')({}, ctx);
+  const replaced = reads;
+  await delay(100);
+  assert.equal(reads, replaced, 'installation stops the old poller before the new factory mounts');
+  const next = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  t.after(() => next.dispose());
+  await pi.handlers.get('session_shutdown')({}, ctx);
+  const stopped = reads;
+  await delay(100);
+  assert.equal(reads, stopped, 'shutdown stops the mounted poller');
+});
+
+test('Ctrl detector failures stop polling, notify the user, and persist a stack report', async (t) => {
+  const agentDir = await mkdtemp(join(tmpdir(), 'footer-location-error-'));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    await rm(agentDir, { recursive: true, force: true });
+  });
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const repo = resolve(fileURLToPath(new URL('../', import.meta.url)));
+  const ctx = createFakeContext({ cwd: repo });
+  const notifications = [];
+  ctx.ui.notify = (...args) => notifications.push(args);
+  let reads = 0;
+  let broken = false;
+  createFooterExtension({ readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+    isCtrlPressed: () => {
+      reads++;
+      if (broken) throw new Error('native modifier probe failed');
+      return true;
+    } })(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  const footer = ctx.footerFactory({ requestRender() {} }, plainTheme, footerData);
+  t.after(() => footer.dispose());
+  const deadline = Date.now() + 3000;
+  while (!footer.render(120)[0].startsWith('@stanley50z/sz-pi-extensions') && Date.now() < deadline) await delay(25);
+  assert.ok(footer.render(120)[0].startsWith('@stanley50z/sz-pi-extensions'));
+  broken = true;
+  await delay(100);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0][1], 'error');
+  assert.ok(footer.render(120)[0].startsWith(repo.replace(process.env.HOME || process.env.USERPROFILE, '~')),
+    'a failed detector must not leave a stale GitHub label');
+  const stopped = reads;
+  await delay(100);
+  assert.equal(reads, stopped, 'a broken native detector must not keep polling');
+  const report = await readFile(join(agentDir, 'logs', 'footer-location.log'), 'utf8');
+  assert.match(report, /Footer GitHub link failed/);
+  assert.match(report, /Error: native modifier probe failed\n\s+at /);
+});
+
+if (process.platform === 'win32' || process.platform === 'darwin') {
+  test('SSH sessions never poll the server keyboard for the footer link', async (t) => {
+    const { getNativePlatformHelper } = await import('@earendil-works/pi-tui/dist/native-platform.js');
+    const helper = getNativePlatformHelper();
+    assert.equal(typeof helper?.isModifierPressed, 'function');
+    const state = t.mock.method(helper, 'isModifierPressed', () => { throw new Error('must not read server keyboard'); });
+    const previous = process.env.SSH_CONNECTION;
+    process.env.SSH_CONNECTION = 'test-client 1234 test-server 22';
+    t.after(() => {
+      if (previous === undefined) delete process.env.SSH_CONNECTION;
+      else process.env.SSH_CONNECTION = previous;
+    });
+    const { default: install } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext();
+    ctx.mode = 'tui';
+    install(pi);
+    await pi.handlers.get('session_start')({}, ctx);
+    t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+    let renders = 0;
+    const footer = ctx.footerFactory({ requestRender() { renders++; } }, plainTheme, footerData);
+    t.after(() => footer.dispose());
+    await delay(100);
+    assert.ok(footer.render(120)[0].startsWith('/tmp/test-project'));
+    assert.equal(state.mock.callCount(), 0);
+    assert.equal(renders, 0);
+  });
+
+  test('local native Control state drives footer repaint without a supplied detector', async (t) => {
+    const { getNativePlatformHelper } = await import('@earendil-works/pi-tui/dist/native-platform.js');
+    const helper = getNativePlatformHelper();
+    assert.equal(typeof helper?.isModifierPressed, 'function');
+    const originalSsh = [process.env.SSH_CONNECTION, process.env.SSH_TTY];
+    delete process.env.SSH_CONNECTION;
+    delete process.env.SSH_TTY;
+    t.after(() => {
+      for (const [index, name] of ['SSH_CONNECTION', 'SSH_TTY'].entries()) {
+        if (originalSsh[index] === undefined) delete process.env[name];
+        else process.env[name] = originalSsh[index];
+      }
+    });
+    let held = false;
+    const state = t.mock.method(helper, 'isModifierPressed', () => held);
+    const { default: install } = await freshFooterModule();
+    const pi = createFakePi();
+    const ctx = createFakeContext();
+    ctx.mode = 'tui';
+    install(pi);
+    await pi.handlers.get('session_start')({}, ctx);
+    t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+    let renders = 0;
+    const footer = ctx.footerFactory({ requestRender() { renders++; } }, plainTheme, footerData);
+    t.after(() => footer.dispose());
+    held = true;
+    await delay(100);
+    assert.ok(renders > 0);
+    assert.ok(state.mock.calls.every(call => call.arguments[0] === 'control'));
+  });
+}
+
+test('fullscreen terminal mouse sequences activate the Ctrl GitHub link using this checkout', async (t) => {
+  const repo = resolve(fileURLToPath(new URL('../', import.meta.url)));
+  let ctrl = false;
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const spawn = t.mock.method(childProcess, 'spawn', () => child);
+  const { createFooterExtension } = await freshFooterModule();
+  const pi = createFakePi();
+  const ctx = createFakeContext({ cwd: repo });
+  createFooterExtension({ readClaudeRateLimits: async () => null, readCodexRateLimits: async () => null,
+    isCtrlPressed: () => ctrl })(pi);
+  await pi.handlers.get('session_start')({}, ctx);
+  t.after(() => pi.handlers.get('session_shutdown')({}, ctx));
+  let input;
+  const terminal = {
+    columns: 100, rows: 5, kittyProtocolActive: false,
+    start(onInput) { input = onInput; }, stop() {}, write() {},
+    hideCursor() {}, showCursor() {}, moveBy() {}, clearLine() {},
+    clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {},
+  };
+  const tui = new TuiAltScreen(terminal, false, undefined, { mouse: true });
+  const footer = ctx.footerFactory(tui, plainTheme, footerData);
+  t.after(() => footer.dispose());
+  tui.setLayoutRoot(footer);
+  tui.start();
+  t.after(() => tui.stop());
+  await delay(100);
+  const localLines = tui.getScreenLines().map(stripVTControlCharacters);
+  ctrl = true;
+  const deadline = Date.now() + 3000;
+  while (!tui.getScreenLines().join('').includes('@stanley50z/sz-pi-extensions') && Date.now() < deadline) await delay(25);
+  const lines = tui.getScreenLines().map(stripVTControlCharacters);
+  const row = lines.findIndex(line => line.includes('@stanley50z/sz-pi-extensions'));
+  assert.ok(row >= 0, JSON.stringify(lines));
+  input(`\x1b[<16;1;${row + 1}M`);
+  input(`\x1b[<16;1;${row + 1}m`);
+  assert.equal(spawn.mock.callCount(), 1, 'press/release must synthesize one component click');
+  assert.deepEqual(spawn.mock.calls[0].arguments[1], ['https://github.com/stanley50z/sz-pi-extensions']);
+  ctrl = false;
+  await delay(100);
+  assert.deepEqual(tui.getScreenLines().map(stripVTControlCharacters), localLines);
+  input(`\x1b[<0;1;${row + 1}M`);
+  input(`\x1b[<0;1;${row + 1}m`);
+  assert.deepEqual(spawn.mock.calls[1].arguments[1], [repo]);
+  const logDir = join(homedir(), '.pi', 'agent', 'logs', 'footer-github-validation');
+  await mkdir(logDir, { recursive: true });
+  await writeFile(join(logDir, 'e2e.json'), JSON.stringify({
+    cwd: repo, input: 'SGR Ctrl-left press/release, then plain left press/release',
+    localLines, ctrlLines: lines, targets: spawn.mock.calls.map(call => call.arguments[1]),
+    boundaries: 'simulated terminal/key state and desktop opener; real footer, fullscreen TUI, Git, and checkout',
+  }, null, 2), 'utf8');
 });
 
 test('clicking the cwd path opens the session folder in the file manager', async (t) => {

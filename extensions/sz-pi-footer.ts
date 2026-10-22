@@ -3,21 +3,26 @@
  *
  * Shows the default footer info plus:
  * - Token speed (live output tokens/second, finalized for the most recent response)
- * - Clickable cwd path that opens the session folder in the OS file manager
+ * - Clickable cwd path; holding Ctrl shows and opens the GitHub origin instead
  * - Clickable Git diff stats (+X −Y) centred when the session is in a repository
  * - Up to five changed files below the footer when the Git stats are expanded
  * - A temporary line naming running subagents with their models and reasoning levels
  */
 
 import childProcess from "node:child_process";
-import { resolve } from "node:path";
+import { appendFile, mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { calculateCost, type AssistantMessage } from "@earendil-works/pi-ai";
 import {
   estimateTokens,
+  getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
+// Pi's own native input helper reads bare modifier state without spawning a polling process.
+import { getNativePlatformHelper } from "@earendil-works/pi-tui/dist/native-platform.js";
 import { readClaudeRateLimits, type ClaudeRateLimits } from "../lib/claude-rate-limits.ts";
 import {
   readCodexRateLimits,
@@ -184,6 +189,36 @@ function openInFileManager(cwd: string): void {
   child.unref();
 }
 
+const execFile = promisify(childProcess.execFile);
+type GitHubRepository = { label: string; url: string };
+
+// Resolve only origin, without network access; never turn arbitrary remotes into opener arguments.
+async function readGitHubRepository(cwd: string, signal: AbortSignal): Promise<GitHubRepository | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFile("git", ["-C", cwd, "remote", "get-url", "origin"], {
+      signal, timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024,
+    }));
+  } catch (error) {
+    // Git exits 2 for a missing origin, or 128 outside a repository.
+    if (error && typeof error === "object" && "code" in error && (error.code === 2 || error.code === 128)) return null;
+    throw new Error("Could not read the footer GitHub origin");
+  }
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(stdout.trim());
+  if (!match || match[1] === "." || match[1] === ".." || match[2] === "." || match[2] === "..") return null;
+  const repository = `${match[1]}/${match[2]}`;
+  return { label: `@${repository}`, url: `https://github.com/${repository}` };
+}
+
+// Open the validated GitHub URL through the desktop's default browser.
+function openGitHub(url: string, onError: (error: unknown) => void): void {
+  const command = process.platform === "win32" ? "explorer.exe"
+    : process.platform === "darwin" ? "open" : "xdg-open";
+  const child = childProcess.spawn(command, [url], { detached: true, stdio: "ignore", windowsHide: true });
+  child.on("error", onError);
+  child.unref();
+}
+
 function formatProviderName(provider: string): string {
   return provider === "openai-codex" ? "OpenAI" : provider;
 }
@@ -212,9 +247,13 @@ function resetSpeed() {
 
 // ── extension ─────────────────────────────────────────────────────────
 
-type FooterDeps = { readClaudeRateLimits: typeof readClaudeRateLimits; readCodexRateLimits: typeof readCodexRateLimits };
+type FooterDeps = {
+  readClaudeRateLimits: typeof readClaudeRateLimits;
+  readCodexRateLimits: typeof readCodexRateLimits;
+  isCtrlPressed?: () => boolean;
+};
 
-// Builds the footer extension; tests replace the Claude Code and Codex usage readers.
+// Builds the footer extension; tests can supply account readers and OS modifier state.
 export function createFooterExtension(deps: FooterDeps = { readClaudeRateLimits, readCodexRateLimits }) {
   return (pi: ExtensionAPI) => footerExtension(pi, deps);
 }
@@ -231,6 +270,7 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
   let runningSubagents: RunningSubagent[] = [];
   let rateLimitRefresh: Promise<void> | null = null;
   let requestFooterRender: (() => void) | null = null;
+  let stopLocationPolling: (() => void) | null = null;
   const copilotUsage = createCopilotUsageReader();
   let copilotText = "Copilot month:…";
   let copilotMonth = "";
@@ -347,6 +387,8 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
     unsubscribeGitView();
     unsubscribeCodexRateLimits();
     unsubscribeRunningSubagents();
+    stopLocationPolling?.();
+    stopLocationPolling = null;
     requestFooterRender = null;
     _ctx = null;
   });
@@ -446,15 +488,82 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
   // ── footer installation ────────────────────────────────────────────
 
   function installFooter(ctx: ExtensionContext) {
+    stopLocationPolling?.();
     ctx.ui.setFooter((tui, theme, footerData) => {
       const renderFooter = () => tui.requestRender();
       requestFooterRender = renderFooter;
       const unsub = footerData.onBranchChange(renderFooter);
       let diffHitbox: { start: number; end: number; row: number } | null = null;
       let cwdHitbox: { end: number; cwd: string } | null = null;
+      const getCwd = () => ctx.sessionManager.getCwd?.() ?? ctx.cwd;
+      // OS key state belongs to this machine, never to an SSH client's keyboard.
+      const native = ctx.mode === "tui" && !process.env.SSH_CONNECTION && !process.env.SSH_TTY
+        ? getNativePlatformHelper() : undefined;
+      const readModifier = native?.isModifierPressed;
+      const isCtrlPressed = deps.isCtrlPressed ?? (readModifier
+        ? () => readModifier("control") : undefined);
+      let ctrlHeld = false;
+      let repository: GitHubRepository | null = null;
+      let repositoryCwd: string | undefined;
+      let disposed = false;
+      let originRead: AbortController | undefined;
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const reportLocationError = (error: unknown) => {
+        const report = new Error("Footer GitHub link failed", { cause: error });
+        ctx.ui.notify("Footer GitHub link failed; see logs/footer-location.log", "error");
+        void (async () => {
+          const directory = join(getAgentDir(), "logs");
+          await mkdir(directory, { recursive: true });
+          await appendFile(join(directory, "footer-location.log"),
+            `${new Date().toISOString()} ${report.stack}\n${error instanceof Error ? error.stack : String(error)}\n`, "utf8");
+        })().catch((loggingError: unknown) => console.error("Could not persist footer error", loggingError));
+      };
+      const stop = () => {
+        disposed = true;
+        clearInterval(timer);
+        originRead?.abort();
+      };
+      stopLocationPolling = stop;
+      const pollLocation = () => {
+        if (!isCtrlPressed) return;
+        try {
+          const held = isCtrlPressed();
+          if (held !== ctrlHeld) {
+            ctrlHeld = held;
+            renderFooter();
+          }
+          const cwd = getCwd();
+          if (cwd === repositoryCwd) return;
+          repositoryCwd = cwd;
+          repository = null;
+          originRead?.abort();
+          const read = new AbortController();
+          originRead = read;
+          void readGitHubRepository(cwd, read.signal).then((result) => {
+            if (disposed || read.signal.aborted) return;
+            repository = result;
+            if (ctrlHeld) renderFooter();
+          }).catch((error: unknown) => {
+            if (!disposed && !read.signal.aborted) reportLocationError(error);
+          });
+        } catch (error) {
+          stop();
+          ctrlHeld = false;
+          repository = null;
+          renderFooter();
+          reportLocationError(error);
+        }
+      };
+      if (isCtrlPressed) {
+        timer = setInterval(pollLocation, 50);
+        timer.unref();
+        pollLocation();
+      }
 
       return {
         dispose() {
+          stop();
+          if (stopLocationPolling === stop) stopLocationPolling = null;
           unsub();
           if (requestFooterRender === renderFooter) requestFooterRender = null;
         },
@@ -462,7 +571,9 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
         handleMouse(event: TuiMouseEvent) {
           if (event.type !== "click" || event.button !== "left") return undefined;
           if (cwdHitbox && event.y === 0 && event.x >= 0 && event.x < cwdHitbox.end) {
-            openInFileManager(cwdHitbox.cwd);
+            const github = repositoryCwd === cwdHitbox.cwd ? repository : null;
+            if (github && event.ctrl) openGitHub(github.url, reportLocationError);
+            else openInFileManager(cwdHitbox.cwd);
             return { handled: true, render: false };
           }
           if (
@@ -491,10 +602,9 @@ function footerExtension(pi: ExtensionAPI, deps: FooterDeps) {
           const speedRight = speedText;
           const speedW = visibleWidth(speedRight);
 
-          const cwd = typeof ctx.sessionManager.getCwd === "function"
-            ? ctx.sessionManager.getCwd()
-            : ctx.cwd;
-          const compactCwd = compactPath(cwd);
+          const cwd = getCwd();
+          const compactCwd = ctrlHeld && repositoryCwd === cwd && repository
+            ? repository.label : compactPath(cwd);
           let pwd = compactCwd;
           // Pi reads HEAD directly, even from incomplete .git metadata. Only
           // show its branch after the Git collector confirms a repository.
