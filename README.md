@@ -95,6 +95,22 @@ Pi discovers extensions and skills from the package manifest in `package.json`:
 }
 ```
 
+## T3 Code
+
+Inside T3 Code, use native Codex for OpenAI models, native Claude Code for Anthropic models, and Pi for third-party models. Shared model and subagent preferences live in `~/sz-skills/global/AGENTS.md`; that repository's setup installs them for each harness. Codex and Claude Code use native web search, while Pi retains Ketch and its specialist research skills.
+
+Configure the Pi instance's **Launch arguments** in T3 Code with an explicit allowlist. Replace the package paths below with absolute paths for the server machine; quote paths containing spaces:
+
+```text
+--no-extensions --extension builtin:llama.cpp --extension builtin:mcp --extension builtin:codemode --extension builtin:tool-search --extension /absolute/path/sz-pi-extensions/extensions/file-search.ts --append-system-prompt /absolute/path/sz-pi-extensions/config/T3_SYSTEM.md --skill /absolute/path/.agents/skills/t3code-file-links/SKILL.md
+```
+
+This keeps Pi's built-in extensions and local search tools. T3 Code injects its own integration extension explicitly. Other automatically loaded extensions, including this package's subagents, Claude Bridge, questions, reasoning/speed commands, renderers, terminal UI, notifications, updates, and session helpers, do not load. Add explicit `--extension` paths if a third-party model needs an extension-provided provider. Skills are not disabled; the explicit file-link skill also makes it available when standalone Pi excludes it.
+
+`config/T3_SYSTEM.md` replaces discovery of the normal appended prompt for this launch, so standalone Pi's Pi-first/Claude Bridge preferences do not conflict with T3 routing. Neither the package registration nor standalone Pi settings change. Restart the T3 agent session after changing launch arguments; do not interrupt active work just to apply this configuration.
+
+Before modifying local T3 settings, keep a recovery copy beside them under `~/.t3/userdata/backups/`. Migration setup output and exception stack traces are saved under `~/.pi/agent/logs/t3-migration/`.
+
 ## Pi-specific system instructions
 
 `npm install` also installs the tracked `config/APPEND_SYSTEM.md` into `~/.pi/agent/APPEND_SYSTEM.md`, or the directory selected by `PI_CODING_AGENT_DIR`. The installer creates or updates only the `sz-pi-extensions` marked section, preserves unrelated instructions, and avoids duplicates on repeat installs.
