@@ -183,7 +183,9 @@ Reconnect with `ssh mac` through the helper profile and run `/reload` in existin
 
 Type `$` in the prompt editor to autocomplete loaded skills, then submit `$skill-name` with any additional instructions. While a `$skill` or `/skill:` completion is available, Enter accepts it without submitting, just like Tab; press Enter again to send the completed prompt. A loaded `$skill-name` mention at the start or within a prompt invokes the same Pi skill expansion as `/skill:skill-name`; unknown `$name` text is left unchanged.
 
-The input's top-right `[ commit ]` button submits `$commit` without changing your draft. Clicks work in fullscreen mode; when Pi is busy, the commit is queued as a follow-up. In regular scrollback mode, type `$commit` instead.
+The input's top-right `[ commit ]` button submits `$commit` without changing your draft. Hold Ctrl in the focused terminal to show `[ exit ]`; Ctrl-click requests the same orderly shutdown as `/quit`, even while Pi is busy. Releasing Ctrl restores Commit. Like the footer's GitHub link, idle modifier detection is local-only; over SSH, Ctrl-click still exits using the click's modifier. Clicks work in fullscreen mode; when Pi is busy, a normal commit click is queued as a follow-up. In regular scrollback mode, type `$commit` or `/quit` instead.
+
+Key-detector failures show a notification and persist stack traces at `~/.pi/agent/logs/commit-button.log` (under `PI_CODING_AGENT_DIR` when set). Polling stops after a failure; `/reload` retries it. Commit/Exit regression output, fullscreen screen captures, and failure stack traces are kept under `~/.pi/agent/logs/commit-button-validation/`.
 
 Explicitly invoking `$commit` or `/skill:commit`, including through the commit button, keeps the current model and temporarily uses its lowest supported reasoning level, including `off` when supported. After the run settles, even on failure or cancellation, the previous reasoning is restored unless you selected another model in the meantime. Invocations during ongoing work wait until that work settles before lowering reasoning. The agent reading the commit skill on its own does not change reasoning.
 
